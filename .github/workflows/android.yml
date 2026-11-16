@@ -1,0 +1,124 @@
+name: Android APK
+
+on:
+  push:
+    branches-ignore: ['public'] # a snapshot kept for publishing; nothing is built from it here
+    paths-ignore: ['addon/**', 'Dockerfile.addon', 'repository.yaml', '**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write # to publish the APK as a GitHub release
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Version
+        id: v
+        run: |
+          base=$(node -p "require('./package.json').version")
+          echo "version=$base+${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "tag=v$base-build.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          # Channel (see src/updates.js): builds with the private layer are Private, builds of main are Developer.
+          # Beta and Stable are never built: the owner promotes a Developer build to them.
+          if [ -d src/local ] || [ -d homes ]; then ch=private; label=Private
+          elif [ "${{ github.ref_name }}" = "main" ]; then ch=dev; label=Alpha
+          else ch=test; label="Test (not offered to anyone)"; fi
+          echo "channel=$ch" >> "$GITHUB_OUTPUT"; echo "label=$label" >> "$GITHUB_OUTPUT"
+          # The requests this build contains: every #number in the commits since the build before it.
+          reqs=$(git log -1 --format=%B | grep -o '#[0-9]\+' | tr -d '#' | sort -un | paste -sd, -)
+          echo "requests=$reqs" >> "$GITHUB_OUTPUT"
+
+      # Signing key from the repository's secrets, when it has one (see android/app/build.gradle).
+      - name: Signing key
+        id: sign
+        env:
+          KEYSTORE_B64: ${{ secrets.NIDORAMA_KEYSTORE_BASE64 }}
+        run: |
+          # A repository that keeps its key on a private branch lends it to builds of the core, so that
+          # every channel is signed alike and a device can move between them. The key is never committed here.
+          if [ ! -f android/signing.properties ] && git fetch -q --depth=1 origin private 2>/dev/null && git cat-file -e FETCH_HEAD:android/signing.properties 2>/dev/null; then
+            git show FETCH_HEAD:android/signing.properties > android/signing.properties
+            store=$(grep '^storeFile=' android/signing.properties | cut -d= -f2)
+            git show "FETCH_HEAD:android/$store" > "android/$store"
+          fi
+          if [ -f android/signing.properties ]; then echo "signed=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > android/ci.keystore
+            echo "NIDORAMA_KEYSTORE=ci.keystore" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else echo "No signing key here: the APK is built to check it builds, but it is not released."; fi
+
+      - name: Build web app
+        run: |
+          npm ci
+          npm run build
+        env:
+          NIDORAMA_VERSION: ${{ steps.v.outputs.version }}
+          NIDORAMA_CHANNEL: ${{ steps.v.outputs.channel }}
+          NIDORAMA_REPO_PRIVATE: ${{ github.event.repository.private }}
+
+      - name: Copy web app into the Android shell
+        run: npx cap sync android
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Build APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease
+        env:
+          NIDORAMA_VERSION: ${{ steps.v.outputs.version }}
+          NIDORAMA_VERSION_CODE: ${{ github.run_number }}
+          NIDORAMA_KEYSTORE_PASSWORD: ${{ secrets.NIDORAMA_KEYSTORE_PASSWORD }}
+          NIDORAMA_KEY_ALIAS: ${{ secrets.NIDORAMA_KEY_ALIAS }}
+          NIDORAMA_KEY_PASSWORD: ${{ secrets.NIDORAMA_KEY_PASSWORD }}
+
+      - name: Name the APK
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk "Nidorama-${{ steps.v.outputs.tag }}.apk"
+          # Any home files kept in homes/<name>/home.json are published beside the APK as examples.
+          for f in homes/*/home.json; do [ -f "$f" ] && cp "$f" "$(basename "$(dirname "$f")").nidorama.json"; done; true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nidorama-apk
+          path: Nidorama-*.apk
+
+      # Only builds signed with the release key are published: anything else could not install over them.
+      - name: Publish release
+        if: steps.sign.outputs.signed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.v.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Nidorama ${{ steps.v.outputs.version }} (${{ github.ref_name }})
+          prerelease: true # a build only becomes "the latest release" when it is promoted to Stable
+          make_latest: false
+          files: |
+            Nidorama-*.apk
+            *.nidorama.json
+          body: |
+            <!-- nidorama:channel=${{ steps.v.outputs.channel }} requests=${{ steps.v.outputs.requests }} -->
+            Channel: ${{ steps.v.outputs.label }}
+
+            Android build of `${{ github.ref_name }}` at ${{ github.sha }}.
+            **Before you update, save a backup:** in the app, Settings → Updates and backup → Back up this device. It keeps your homes, dashboards and settings in one file; Restore a backup, in the same place, brings them back.
+            Install: open this page on the phone or tablet, download the APK, allow installs from the browser.
+            Builds signed with the same key install over one another.
+            Any `*.nidorama.json` here is an example home file: in the app choose Import a home file.

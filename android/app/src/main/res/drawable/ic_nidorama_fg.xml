@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nidorama icon: a small isometric room with a warm lamp. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateX="22" android:translateY="20" android:scaleX="1" android:scaleY="1">
+        <path android:fillColor="#E8DCCB" android:pathData="M2,36 L32,18 L62,36 L32,54 Z"/>
+        <path android:fillColor="#B9A690" android:pathData="M2,36 L2,42 L32,60 L32,54 Z"/>
+        <path android:fillColor="#A08C76" android:pathData="M62,36 L62,42 L32,60 L32,54 Z"/>
+        <path android:fillColor="#7B5A43" android:pathData="M17,32 L32,23 L47,32 L32,41 Z"/>
+        <path android:fillColor="#FFB468" android:pathData="M44,14 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0"/>
+    </group>
+</vector>

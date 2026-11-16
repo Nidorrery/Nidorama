@@ -1,0 +1,9 @@
+{
+  "name": "nidorama-addon",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ws": "8.18.3"
+  },
+  "version": "0.21.0"
+}

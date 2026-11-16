@@ -1,0 +1,15 @@
+{
+  "appId": "app.nidorama.controller",
+  "appName": "Nidorama",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true,
+    "allowNavigation": [
+      "*"
+    ]
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

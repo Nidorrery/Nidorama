@@ -1,0 +1,36 @@
+name: Promote a build
+
+# Moves one build one stage on (Alpha -> Beta -> Stable) by re-labelling its release, exactly as
+# the Promote button in the app does. Nothing is rebuilt. Run by the owner from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag of the build to promote
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-label the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > release.json
+          id=$(jq -r .id release.json)
+          from=$(jq -r .body release.json | grep -o 'nidorama:channel=[a-z]*' | head -1 | cut -d= -f2)
+          case "$from" in
+            dev) to=beta; label=Beta ;;
+            beta) to=stable; label=Stable ;;
+            *) echo "A build on channel '$from' cannot be promoted."; exit 1 ;;
+          esac
+          jq -r .body release.json | sed -E "s/(nidorama:channel=)$from/\1$to/; s/^([[:space:]]*)Channel: .*/\1Channel: $label/" > body.txt
+          if [ "$to" = stable ]; then extra='-F prerelease=false -f make_latest=true'; else extra='-F prerelease=true'; fi
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F body=@body.txt $extra > /dev/null
+          echo "Promoted $TAG from $from to $to."

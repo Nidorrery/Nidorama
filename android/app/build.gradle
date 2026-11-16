@@ -1,0 +1,83 @@
+apply plugin: 'com.android.application'
+
+def signingProps = new Properties()
+def signingFile = rootProject.file('signing.properties')
+if (signingFile.exists()) signingFile.withInputStream { signingProps.load(it) }
+def signingStore = signingProps.getProperty('storeFile') ?: System.getenv('NIDORAMA_KEYSTORE')
+
+android {
+    namespace = "app.nidorama.controller"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "app.nidorama.controller"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        // CI sets these from the run number and package.json version.
+        versionCode = Integer.parseInt(System.getenv("NIDORAMA_VERSION_CODE") ?: "1")
+        versionName = System.getenv("NIDORAMA_VERSION") ?: "0.1.0"
+        // The GitHub repository this build checks for updates ("owner/name"); empty for a local build.
+        resValue "string", "nidorama_repo", System.getenv("NIDORAMA_REPO") ?: System.getenv("GITHUB_REPOSITORY") ?: ""
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    // Signing. Every release must be signed with the same key or it will not install over the last one.
+    // The key is never in the source: it comes from android/signing.properties (a file you keep
+    // to yourself: storeFile, storePassword, keyAlias, keyPassword) or from the environment
+    // (NIDORAMA_KEYSTORE, NIDORAMA_KEYSTORE_PASSWORD, NIDORAMA_KEY_ALIAS, NIDORAMA_KEY_PASSWORD — CI secrets).
+    // With neither, builds are signed with the machine's throw-away debug key.
+    signingConfigs {
+        if (signingStore) {
+            sideload {
+                storeFile rootProject.file(signingStore)
+                storePassword signingProps.getProperty('storePassword') ?: System.getenv('NIDORAMA_KEYSTORE_PASSWORD')
+                keyAlias signingProps.getProperty('keyAlias') ?: System.getenv('NIDORAMA_KEY_ALIAS')
+                keyPassword signingProps.getProperty('keyPassword') ?: System.getenv('NIDORAMA_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            signingConfig signingStore ? signingConfigs.sideload : signingConfigs.debug
+        }
+        release {
+            signingConfig signingStore ? signingConfigs.sideload : signingConfigs.debug
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    implementation "androidx.core:core:$androidxCoreVersion"
+    implementation "androidx.work:work-runtime:2.10.0"
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

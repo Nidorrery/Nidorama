@@ -1,0 +1,72 @@
+name: Home Assistant add-on
+
+on:
+  push:
+    branches-ignore: ['public']
+    paths: ['addon/**', 'Dockerfile.addon', 'src/**', 'public/**', 'index.html', 'package*.json', 'vite.config.js', '.github/workflows/addon.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Version
+        id: v
+        run: |
+          echo "version=$(grep '^version:' addon/nidorama/config.yaml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+          echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        if: github.ref_name == 'main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Build once to test: start the add-on and have its render engine make a real (small) picture.
+      - uses: docker/build-push-action@v6
+        if: matrix.arch == 'amd64'
+        with:
+          context: .
+          file: Dockerfile.addon
+          platforms: ${{ matrix.platform }}
+          load: true
+          build-args: NIDORAMA_VERSION=${{ steps.v.outputs.version }}
+          tags: nidorama-addon:test
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+      - name: Test the render engine
+        if: matrix.arch == 'amd64'
+        run: |
+          docker run -d --name nidorama -e NIDORAMA_ASSETS=/tmp/nidorama nidorama-addon:test
+          sleep 3
+          docker exec nidorama node test/smoke.mjs || { docker logs nidorama; exit 1; }
+      # Branch builds only check that the image builds; main publishes it for Home Assistant to pull.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.addon
+          platforms: ${{ matrix.platform }}
+          push: ${{ github.ref_name == 'main' }}
+          build-args: NIDORAMA_VERSION=${{ steps.v.outputs.version }}
+          labels: |
+            io.hass.type=addon
+            io.hass.arch=${{ matrix.arch }}
+            io.hass.version=${{ steps.v.outputs.version }}
+          tags: |
+            ghcr.io/${{ steps.v.outputs.owner }}/nidorama-addon-${{ matrix.arch }}:${{ steps.v.outputs.version }}
+            ghcr.io/${{ steps.v.outputs.owner }}/nidorama-addon-${{ matrix.arch }}:latest
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
