@@ -1,9 +1,12 @@
 // Feature requests and bug reports. A request is only ever *logged* (as a GitHub issue on the
 // project); nothing is built until the project owner approves it. The owner reviews the log in the
 // app and marks requests approved or declined.
-const REPO = __REPO__;
-const API = `https://api.github.com/repos/${REPO}`;
-export const NEW_ISSUE_URL = `https://github.com/${REPO}/issues/new`;
+// The log lives in the build's own repository, unless a local addition points it elsewhere (#121: the owner's
+// private builds read the public repository's log).
+let REPO = __REPO__, API = `https://api.github.com/repos/${REPO}`;
+export let NEW_ISSUE_URL = `https://github.com/${REPO}/issues/new`;
+export const requestsRepo = () => REPO;
+export function setRequestsRepo(r) { if (!/^[\w.-]+\/[\w.-]+$/.test(r || '')) return; REPO = r; API = `https://api.github.com/repos/${REPO}`; NEW_ISSUE_URL = `https://github.com/${REPO}/issues/new`; }
 
 async function gh(token, path, opts = {}) {
   const res = await fetch(API + path, {

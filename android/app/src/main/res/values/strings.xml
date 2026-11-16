@@ -1,6 +1,5 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Nidorama</string>
     <string name="title_activity_main">Nidorama</string>
     <string name="package_name">app.nidorama.controller</string>
     <string name="custom_url_scheme">app.nidorama.controller</string>

@@ -30,7 +30,7 @@ import { uid } from './catalog.js';
 import { themeList, themeById, applyTheme, themeSettings, WALLPAPERS, setWallPhoto, ownNight } from './themes.js';
 import { shrinkPhoto } from './blobs.js';
 import { findUpdate, buildOf, CHANNELS, NEXT, BUILT_FOR, listBuilds, latestIn, promote, acceptedBy } from './updates.js';
-import { listRequests, sendRequest, isOwner, approve, unapprove, decline, TARGETS, editRequest, vote, unvote, NEW_ISSUE_URL, AREAS, areaName, shrinkScreenshot, attachScreenshot, screenshotsOf } from './requests.js';
+import { requestsRepo, setRequestsRepo, listRequests, sendRequest, isOwner, approve, unapprove, decline, TARGETS, editRequest, vote, unvote, NEW_ISSUE_URL, AREAS, areaName, shrinkScreenshot, attachScreenshot, screenshotsOf } from './requests.js';
 
 const VERSION = __APP_VERSION__;
 const RELEASES_URL = `https://github.com/${__REPO__}/releases`;
@@ -1584,7 +1584,8 @@ function updatesSettings() {
     h('div', { class: 'btns pad' }, h('button', { class: 'wide', onclick: openBackup }, icon('file'), 'Back up this device'), h('button', { class: 'wide', onclick: pickBackup }, icon('undo'), 'Restore a backup')),
     h('p', { class: 'hint' }, `${backupAge()} Restoring brings back the homes, dashboards and settings in a backup file; homes with the same name are replaced.`),
     h('div', { class: 'msep' })));
-  // GitHub access. A private repository needs a token for everything; a public one only to send requests, vote, and for the owner.
+  if (!REPO_PRIVATE) return body; // public builds: nothing to sign in to (#121)
+  // GitHub access (the owner's builds): the private repository needs a token for updates.
   const gh = h('input', { type: 'password', value: device.githubToken || '', placeholder: 'GitHub access token', autocomplete: 'off' });
   gh.addEventListener('change', async () => { device.githubToken = gh.value.trim(); saveDevice(); updateError = ''; syncNotifications(); await checkForUpdate(true); renderSheet(); });
   body.append(...nodes(
@@ -1593,10 +1594,21 @@ function updatesSettings() {
     h('p', { class: 'hint' + (updateError ? ' bad' : '') }, updateError ? `Updates: ${updateError}.` : REPO_PRIVATE
       ? 'Needed while the Nidorama repository is private: a fine-grained GitHub token for it with "Contents: read" (updates) and "Issues: read and write" (requests). Stored on this device only.'
       : 'Not needed for updates or for reading the requests log. With a token from your own GitHub account ("Issues: read and write") you can send requests and vote on them from the app. Stored on this device only.')));
+  if (requestsRepo() !== __REPO__) {
+    const rq = h('input', { type: 'password', value: device.requestsToken || '', placeholder: 'GitHub access token', autocomplete: 'off' });
+    rq.addEventListener('change', () => { device.requestsToken = rq.value.trim(); saveDevice(); });
+    body.append(...nodes(h('label', {}, `Token for the requests log (${requestsRepo()})`, rq),
+      h('p', { class: 'hint' }, 'A token for that repository with "Issues: read and write", so you can approve and decline requests here. Stored on this device only.')));
+  }
   return body;
 }
-/** Is the repository this build belongs to private? (Then GitHub answers nothing without a token.) */
+/** Is the repository this build belongs to private? (Then GitHub answers nothing without a token.) Only the owner's
+ *  builds come from a private repository: they keep the token field, the Private channel and approving in the app.
+ *  Public builds need no token and have none (#121). */
 const REPO_PRIVATE = __REPO_PRIVATE__;
+const ghToken = () => (REPO_PRIVATE ? device.githubToken || '' : '');
+/** The token for the requests log: the owner's builds may read the public repository's log with a second token. */
+const reqToken = () => (!REPO_PRIVATE ? '' : requestsRepo() !== __REPO__ ? device.requestsToken || '' : device.githubToken || '');
 
 // ---------- kiosk mode (#69, #71): full screen, and a row of cards to swipe along ----------
 // A card is a dashboard. Swiping left / right moves to the card beside it, like cards in a
@@ -1747,7 +1759,7 @@ const INTEGRATIONS = [
 ];
 // Local additions: any file in src/local/ is loaded here and may add to the app (for example more
 // integration tiles). The folder is not part of the open-source core, so a build without it is complete.
-for (const mod of Object.values(import.meta.glob('./local/*.js', { eager: true }))) mod.default?.({ integrations: INTEGRATIONS, h, icon });
+for (const mod of Object.values(import.meta.glob('./local/*.js', { eager: true }))) mod.default?.({ integrations: INTEGRATIONS, h, icon, setRequestsRepo });
 /**
  * A platform's mark: its official logo if one has been bundled at public/brands/<id>.svg (only
  * once its owner's brand rules allow it — see public/brands/README.md), otherwise a plain badge.
@@ -1890,7 +1902,8 @@ function renderViewCtl() {
 
 // ---------- build channels (#75): which builds this device takes, and going back to an earlier one ----------
 /** The channel this device follows. A build with the private layer follows Private until told otherwise; everything else, Stable. */
-const deviceChannel = () => (CHANNELS[device.channel] ? device.channel : BUILT_FOR === 'private' ? 'private' : 'stable');
+// Public builds never follow the owner's Private channel, even after restoring a backup made on the owner's device (#121).
+const deviceChannel = () => (CHANNELS[device.channel] && (device.channel !== 'private' || REPO_PRIVATE) ? device.channel : BUILT_FOR === 'private' && REPO_PRIVATE ? 'private' : 'stable');
 const STAGE = { stable: 0, beta: 1, dev: 2, private: 3 };
 const CHANNEL_ABOUT = { stable: 'finished builds', beta: 'builds being tested before release', dev: 'every new build as it is made; may break', private: 'the owner\'s own builds' };
 function setChannel(ch) {
@@ -1991,7 +2004,7 @@ async function goBackTo(ch) {
       h('button', { class: 'wide' + (saved ? ' ghost' : ''), disabled: !backedUp || !!saved && saved !== 'failed', onclick: async () => {
         note = 'Downloading…'; draw();
         try {
-          const st2 = await native.installUpdate(target.url, device.githubToken, (f) => { note = `Downloading ${Math.round(f * 100)}%`; body.querySelector('.hint').textContent = note; }, { save: true, name: `Nidorama-${target.version}.apk` });
+          const st2 = await native.installUpdate(target.url, ghToken(), (f) => { note = `Downloading ${Math.round(f * 100)}%`; body.querySelector('.hint').textContent = note; }, { save: true, name: `Nidorama-${target.version}.apk` });
           if (st2 === 'needs-permission') { note = 'Allow installs from Nidorama, then tap step 2 again.'; }
           else if (st2 === 'saved') { saved = `Nidorama-${target.version}.apk`; note = ''; }
           else { saved = 'failed'; note = 'This Android version cannot save the file from here. Download the build from the releases page instead, then continue with step 3.'; window.open(RELEASES_URL, '_blank', 'noopener'); }
@@ -2002,7 +2015,7 @@ async function goBackTo(ch) {
       h('p', { class: 'hint' }, 'Then open Downloads, tap the Nidorama file to install it, open it, and choose "Restore a backup" on the first screen. Homes kept in Home Assistant also come back by themselves once it is connected.')] : null));
   draw();
   try {
-    target = await latestIn(ch, device.githubToken);
+    target = await latestIn(ch, ghToken());
     note = !target ? `There is no ${CHANNELS[ch]} build yet. This device stays on its current build until there is one.` : target.build >= mine ? `Nothing to undo: the newest ${CHANNELS[ch]} build (${target.version}) is not older than this one. This device now follows ${CHANNELS[ch]}.` : '';
   } catch (e) { note = `Could not look: ${e.message || e}`; }
   if (document.body.contains(body)) draw();
@@ -2010,7 +2023,7 @@ async function goBackTo(ch) {
 /** Settings → updates: the channel this device follows. */
 function channelSettings() {
   const ch = deviceChannel(), mine = buildOf(VERSION);
-  const choices = ['stable', 'beta', 'dev', ...(BUILT_FOR === 'private' || ch === 'private' ? ['private'] : [])];
+  const choices = ['stable', 'beta', 'dev', ...(REPO_PRIVATE && (BUILT_FOR === 'private' || ch === 'private') ? ['private'] : [])];
   return [
     h('div', { class: 'menu-row' }, icon('update'), h('span', { class: 'grow' }, 'Get updates from', h('span', { class: 'sub' }, CHANNEL_ABOUT[ch])),
       h('select', { 'aria-label': 'Update channel', onchange: (e) => setChannel(e.target.value) }, choices.map((c) => h('option', { value: c, selected: c === ch }, CHANNELS[c])))),
@@ -2036,7 +2049,7 @@ async function checkForUpdate(manual = false) {
   if (!native.isNative || !buildOf(VERSION) || (!manual && device.autoUpdate === false)) return;
   try {
     if (manual) { updateBusy = 'Checking…'; renderUpdate(); }
-    update = await findUpdate(VERSION, device.githubToken, deviceChannel());
+    update = await findUpdate(VERSION, ghToken(), deviceChannel());
     updateBusy = '';
     if (update && !manual) askToUpdate();
   } catch (e) { updateBusy = manual ? `Could not check: ${e.message}` : ''; updateError = e.message; }
@@ -2082,7 +2095,7 @@ async function installUpdate() {
   try {
     updateBusy = 'Downloading…';
     renderUpdate();
-    const status = await native.installUpdate(update.url, device.githubToken, (f) => { updateBusy = `Downloading ${Math.round(f * 100)}%`; updateChip.lastChild.textContent = updateBusy; });
+    const status = await native.installUpdate(update.url, ghToken(), (f) => { updateBusy = `Downloading ${Math.round(f * 100)}%`; updateChip.lastChild.textContent = updateBusy; });
     updateBusy = status === 'needs-permission' ? 'Allow installs from Nidorama, then tap again' : '';
   } catch (e) { updateBusy = `Update failed — tap to retry`; console.warn(e); }
   renderUpdate();
@@ -2284,14 +2297,14 @@ native.onSharedFile(receiveScan);
 // ---------- requests: logged for the owner, never built automatically ----------
 function openRequests() {
   closeSheet();
-  const token = device.githubToken;
+  const token = reqToken(), buildsToken = ghToken();
   let items = null, owner = false, error = '', note = '', kind = 'feature', area = '', target = 'dev', experimental = false, builds = null;
-  const loadBuilds = () => listBuilds(token).then((b) => { builds = b; if (document.body.contains(body)) draw(); }, () => {});
+  const loadBuilds = () => listBuilds(buildsToken).then((b) => { builds = b; if (document.body.contains(body)) draw(); }, () => {});
   const doPromote = async (b) => {
     const to = NEXT[b.channel];
     if (!confirm(`Promote build ${b.version} to ${CHANNELS[to]}?\n\nEveryone following ${CHANNELS[to]}${to === 'beta' ? '' : ' or Beta'} will be offered it. It is the same build, not a new one.`)) return;
     note = 'Promoting…'; draw();
-    try { const now = await promote(token, b); b.channel = now; note = `Build ${b.version} is now ${CHANNELS[now]}.`; } catch (e) { note = `Could not promote: ${e.message}`; }
+    try { const now = await promote(buildsToken, b); b.channel = now; note = `Build ${b.version} is now ${CHANNELS[now]}.`; } catch (e) { note = `Could not promote: ${e.message}`; }
     draw();
     setTimeout(loadBuilds, 3000);
   };
@@ -2299,7 +2312,7 @@ function openRequests() {
   let byVotes = false;
   const myVotes = (device.votes ||= {});
   const doVote = async (r) => {
-    if (!token) return window.open(`https://github.com/${__REPO__}/issues/${r.number}`, '_blank', 'noopener');
+    if (!token) return window.open(r.url, '_blank', 'noopener');
     try {
       if (myVotes[r.number]) { await unvote(token, r.number, myVotes[r.number]).catch(() => {}); delete myVotes[r.number]; r.votes = Math.max(0, r.votes - 1); }
       else { myVotes[r.number] = await vote(token, r.number); r.votes += 1; }
@@ -2407,7 +2420,8 @@ function openRequests() {
         counter, sendBtn,
         REPO_PRIVATE ? null : h('p', { class: 'hint' }, 'Requests are public: anyone can read what you write here, and any screenshot you attach.'),
       ] : REPO_PRIVATE ? h('p', { class: 'hint bad' }, 'Sending and viewing requests needs a GitHub access token: More → Settings → Updates → GitHub access.')
-        : h('p', { class: 'hint' }, 'To send a request or vote from the app, add a token from your own GitHub account in More → Settings → Updates. Without one you can read the log here and vote or write on GitHub.'),
+        : [h('p', { class: 'hint' }, 'Requests are kept on GitHub, where anyone can read them. To send one, or to vote, sign in to GitHub there.'),
+          h('button', { class: 'wide primary', onclick: () => window.open(NEW_ISSUE_URL, '_blank', 'noopener') }, icon('plus'), 'Send a request on GitHub')],
       note ? h('p', { class: 'hint' }, note) : null,
       error ? h('p', { class: 'hint bad' }, `Could not load the log: ${error}.`) : null,
       items ? [

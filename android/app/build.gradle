@@ -16,6 +16,14 @@ android {
         versionCode = Integer.parseInt(System.getenv("NIDORAMA_VERSION_CODE") ?: "1")
         versionName = System.getenv("NIDORAMA_VERSION") ?: "0.1.0"
         // The GitHub repository this build checks for updates ("owner/name"); empty for a local build.
+        // Builds from a private repository are the owner's own (#121): a separate app ("Nidorama (private)") that installs
+        // beside the public one instead of replacing it.
+        if (System.getenv("NIDORAMA_REPO_PRIVATE") == "true") {
+            applicationIdSuffix ".private"
+            resValue "string", "app_name", "Nidorama (private)"
+        } else {
+            resValue "string", "app_name", "Nidorama"
+        }
         resValue "string", "nidorama_repo", System.getenv("NIDORAMA_REPO") ?: System.getenv("GITHUB_REPOSITORY") ?: ""
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

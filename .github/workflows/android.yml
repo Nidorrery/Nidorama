@@ -68,7 +68,7 @@ jobs:
           NIDORAMA_VERSION: ${{ steps.v.outputs.version }}
           NIDORAMA_CHANNEL: ${{ steps.v.outputs.channel }}
           NIDORAMA_REPO_PRIVATE: ${{ github.event.repository.private }}
-          NIDORAMA_DONATE_URL: ${{ vars.NIDORAMA_DONATE_URL }}
+          NIDORAMA_DONATE_URL: ${{ vars.NIDORAMA_DONATE_URL || secrets.NIDORAMA_DONATE_URL }}
 
       - name: Copy web app into the Android shell
         run: npx cap sync android
@@ -84,6 +84,7 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon assembleRelease
         env:
+          NIDORAMA_REPO_PRIVATE: ${{ github.event.repository.private }}
           NIDORAMA_VERSION: ${{ steps.v.outputs.version }}
           NIDORAMA_VERSION_CODE: ${{ github.run_number }}
           NIDORAMA_KEYSTORE_PASSWORD: ${{ secrets.NIDORAMA_KEYSTORE_PASSWORD }}

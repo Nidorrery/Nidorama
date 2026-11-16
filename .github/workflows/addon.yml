@@ -45,7 +45,7 @@ jobs:
           load: true
           build-args: |
             NIDORAMA_VERSION=${{ steps.v.outputs.version }}
-            NIDORAMA_DONATE_URL=${{ vars.NIDORAMA_DONATE_URL }}
+            NIDORAMA_DONATE_URL=${{ vars.NIDORAMA_DONATE_URL || secrets.NIDORAMA_DONATE_URL }}
           tags: nidorama-addon:test
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
@@ -64,7 +64,7 @@ jobs:
           push: ${{ github.ref_name == 'main' }}
           build-args: |
             NIDORAMA_VERSION=${{ steps.v.outputs.version }}
-            NIDORAMA_DONATE_URL=${{ vars.NIDORAMA_DONATE_URL }}
+            NIDORAMA_DONATE_URL=${{ vars.NIDORAMA_DONATE_URL || secrets.NIDORAMA_DONATE_URL }}
           labels: |
             io.hass.type=addon
             io.hass.arch=${{ matrix.arch }}

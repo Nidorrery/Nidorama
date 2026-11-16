@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.22.1
+- No GitHub sign-in in the app: requests and votes are made on GitHub, and updates need nothing.
+
 ## 0.22.0
 - Roofs are dashboards of their own: draw roof pieces on the blueprint, drag their corners to
   size them, turn them with a handle, or cover the outside walls of any level in one tap.
