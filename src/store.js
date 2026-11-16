@@ -1,6 +1,7 @@
 // The library of homes (the user's data) and this device's settings.
 // Homes are plain nidorama.home/1 files: created in the app or imported. Nothing is built in.
 // Saved on the device, and mirrored into Home Assistant (per-user data) so other devices get them.
+import { upgradeSite } from './site.js';
 import { buildSample } from './sample.js';
 import { upgradeFile, oldKey, carryOver } from './legacy.js'; // first: it brings settings across before they are read
 import { uid, makeObject, CATALOG } from './catalog.js';
@@ -90,6 +91,7 @@ export function normalizeHome(data) {
     for (const w of L.walls) { w.openings ||= []; w.thickness ||= 0.1; w.height ||= L.ceilingHeight; }
     for (const o of L.objects) o.rotation ||= 0;
   }
+  upgradeSite(home);
   home.updatedAt = Date.now();
   return home;
 }

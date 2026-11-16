@@ -43,7 +43,9 @@ jobs:
           file: Dockerfile.addon
           platforms: ${{ matrix.platform }}
           load: true
-          build-args: NIDORAMA_VERSION=${{ steps.v.outputs.version }}
+          build-args: |
+            NIDORAMA_VERSION=${{ steps.v.outputs.version }}
+            NIDORAMA_DONATE_URL=${{ vars.NIDORAMA_DONATE_URL }}
           tags: nidorama-addon:test
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
@@ -60,7 +62,9 @@ jobs:
           file: Dockerfile.addon
           platforms: ${{ matrix.platform }}
           push: ${{ github.ref_name == 'main' }}
-          build-args: NIDORAMA_VERSION=${{ steps.v.outputs.version }}
+          build-args: |
+            NIDORAMA_VERSION=${{ steps.v.outputs.version }}
+            NIDORAMA_DONATE_URL=${{ vars.NIDORAMA_DONATE_URL }}
           labels: |
             io.hass.type=addon
             io.hass.arch=${{ matrix.arch }}

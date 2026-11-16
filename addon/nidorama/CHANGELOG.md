@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.22.0
+- Roofs are dashboards of their own: draw roof pieces on the blueprint, drag their corners to
+  size them, turn them with a handle, or cover the outside walls of any level in one tap.
+- The whole site is made of your dashboards: each one stands on a floor (Ground up to Level 40)
+  and is dragged and turned into place, catching on the floor below.
+- Add level and Add roof under each home in the dashboard list, starting from the outside walls
+  of another level.
+- An eye beside every dashboard hides it from the list outside edit mode.
+- The widget panel can show a web page or one of your Home Assistant dashboards, with a guide to
+  the one Home Assistant setting it needs.
+- A Support Nidorama button in Settings, where the build has a donation page.
+
 ## 0.21.0
 - The whole site: buildings placed in a yard, each with its floors stacked and a roof (gable,
   hip, skillion or flat), a roof space you can walk in, outdoor things like solar panels and a

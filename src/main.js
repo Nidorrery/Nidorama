@@ -12,8 +12,9 @@ import { app, h, nodes, icon, iconOf, pickFile, st, toggle, setBrightness, state
 import { runSteps } from './steps.js';
 import { startAlerts, alertsSettings } from './alerts.js';
 import { openSketchGuide } from './sketchguide.js';
-import { buildingsOf, siteOf, makeSite } from './site.js';
+import { siteOf, makeSite, upgradeSite, planLevels, floorOf, placeOf, outlineBox, newPiece, roofLevel, floorName } from './site.js';
 import { upgradeFile } from './legacy.js';
+import { webPanel, viewUrl } from './webpanel.js';
 import { startAlarms } from './widgetviews.js';
 import { Editor } from './editor.js';
 import { renderPage, newPage, roomControlsOf } from './dashboard.js';
@@ -104,24 +105,14 @@ const editor = new Editor({
       const name = prompt('Name of the new level', `Level ${hm.levels.length + 1}`);
       if (!name) return;
       const L = newLevel(name);
-      if (src?.building) L.building = src.building;
+      upgradeSite(hm);
+      if (src && !src.site) { L.floor = floorOf(src) + 1; L.place = { ...placeOf(src) }; }
       if (copyWalls) { L.walls = structuredClone(src.walls).map((w) => ({ ...w, openings: [] })); L.ceilingHeight = src.ceilingHeight; }
       mutate(hm, (x) => x.levels.push(L));
       editor.sel = null;
       show({ homeId: hm.id, kind: 'level', id: L.id });
     },
     openLevel: (id) => show({ homeId: home().id, kind: 'level', id }),
-    /** A new building on the site (#112), with a ground floor of its own to draw it on. */
-    addBuilding: () => {
-      const hm = home(), name = prompt('Name of the building', 'Shed');
-      if (!name) return;
-      const id = uid('bld'), L = newLevel('Ground floor');
-      L.name = `${name.trim()} · ground floor`;
-      L.building = id;
-      mutate(hm, (x) => { buildingsOf(x).push({ id, name: name.trim(), x: 0, y: 0, rot: 0 }); x.levels.push(L); });
-      toast(`${name.trim()} added. Draw it on its ground floor, then place it here.`);
-      editor.renderPanel();
-    },
     deleteLevel: () => {
       const hm = home(), L = level();
       if (!confirm(`Delete the level "${L.name}" and everything on it?`)) return;
@@ -169,6 +160,7 @@ app.cameraUrl = (entity) => {
   return pic ? `${ha.url.replace(/\/$/, '')}${pic}${pic.includes('?') ? '&' : '?'}t=${Date.now()}` : '';
 };
 /** Ask Home Assistant something that answers back (a forecast, a calendar's events). */
+app.haUrl = () => hub.ha?.url || '';
 app.ask = (msg) => (hub.ha ? hub.ha.request(msg) : Promise.reject(new Error('not connected')));
 /** Album art of what a speaker is playing (it changes with the track, so no refreshing is needed). */
 app.artUrl = (entity) => {
@@ -700,6 +692,7 @@ function renderPanel() {
 const widgetActions = { openRoom: (id) => { if (level()?.rooms.some((r) => r.id === id)) selectRoom(id); }, allLightsOff: () => allLightsOff(), roomName: (id) => level()?.rooms.find((r) => r.id === id)?.name };
 function overviewPanel() {
   const L = level(), c = app.conn, list = L.roomList || {};
+  if (L.panelView && viewUrl(L.panelView)) return webPanel(L.panelView); // a web page or Home Assistant dashboard (#118)
   if ((L.panelPage?.sections || []).some((x) => (x.tiles || []).length)) return h('div', { class: 'panel-body panel-widgets' },
     renderPage(home(), L.panelPage, { editing: false, embedded: true, actions: widgetActions, rerender: renderPanel }));
   const order = [...(list.order || []).map((id) => L.rooms.find((r) => r.id === id)).filter(Boolean), ...L.rooms.filter((r) => !(list.order || []).includes(r.id))];
@@ -947,6 +940,57 @@ function integrationsSheet() {
     integrationApps().map((a) => menuItem(a.icon, `Open ${a.name}`, null, () => { closeSheet(); a.open(); })));
 }
 
+/** The donate note (#119). The app handles no payment: the button opens the donation page in the browser. */
+function supportNote() {
+  const close = modal(h('div', { class: 'menu' },
+    h('div', { class: 'panel-head' }, h('h2', {}, 'Support Nidorama'), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
+    h('p', { class: 'pad' }, "The Nidorama app is free and open source, and everything it does in your home, on your devices and on your own network stays free. Building and running it still costs real money: code hosting and build machines, developer memberships, and more. If it's useful to you and you'd like to help, any amount is genuinely appreciated. No pressure at all."),
+    h('button', { class: 'wide primary', onclick: () => { close(); window.open(__DONATE_URL__, '_blank', 'noopener'); } }, icon('heart'), 'Donate any amount')));
+}
+
+/** Add level / Add roof (#117): a new plan dashboard on the floor above the one it starts from, with that
+ *  dashboard's outside walls already drawn (a level) or a roof piece covering them (a roof), placed on top of it. */
+function addFloor(hm, roof) {
+  upgradeSite(hm);
+  const plans = planLevels(hm).filter((L) => !L.roof && L.walls.length);
+  const top = [...plans].sort((a, b) => floorOf(b) - floorOf(a))[0];
+  let srcId = top?.id || '';
+  const name = h('input', { type: 'text', value: roof ? 'Roof' : `Level ${top ? floorOf(top) + 1 : planLevels(hm).length}`, placeholder: roof ? 'e.g. Roof, Shed roof' : 'e.g. Upstairs' });
+  const body = h('div', { class: 'menu' }), close = modal(body);
+  const create = () => {
+    const src = hm.levels.find((L) => L.id === srcId), n = name.value.trim() || (roof ? 'Roof' : 'Level');
+    close();
+    const floor = src ? floorOf(src) + 1 : Math.max(0, ...planLevels(hm).map(floorOf)) + (planLevels(hm).length ? 1 : 0), place = src ? { ...placeOf(src) } : { x: 0, y: 0, rot: 0 };
+    let L;
+    if (roof) {
+      const b = src ? outlineBox(src) : null;
+      L = roofLevel(n, floor, place, b && !b.empty ? [newPiece([(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2], b.x1 - b.x0, b.y1 - b.y0)] : []);
+    } else {
+      L = newLevel(n);
+      Object.assign(L, { floor, place });
+      if (src) { const ext = src.walls.filter((w) => w.exterior); L.walls = structuredClone(ext.length ? ext : src.walls).map((w) => ({ ...w, openings: [] })); L.ceilingHeight = src.ceilingHeight || 2.4; }
+    }
+    mutate(hm, (x) => {
+      // A roof standing where the new level goes moves up a floor, so it stays on top.
+      if (!roof && src) for (const r of x.levels) if (r.roof && floorOf(r) >= floor && Math.hypot((placeOf(r).x || 0) - place.x, (placeOf(r).y || 0) - place.y) < 0.5) r.floor = floorOf(r) + 1;
+      x.levels.push(L);
+    }, { undoable: false });
+    show({ homeId: hm.id, kind: 'level', id: L.id });
+    if (!editMode) setEditMode(true);
+    toast(roof ? 'Roof added. Drag its corners to fit, or use the Roof tool for more pieces.' : `${n} added on ${floorName(floor).toLowerCase()}.`);
+  };
+  body.replaceChildren(...nodes(
+    h('div', { class: 'panel-head' }, h('h2', {}, roof ? 'Add roof' : 'Add level'), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
+    h('label', { class: 'field wide-field' }, h('span', {}, 'Name'), name),
+    h('label', { class: 'field wide-field' }, h('span', {}, 'Start from the outside walls of'),
+      h('select', { onchange: (e) => (srcId = e.target.value) },
+        h('option', { value: '', selected: !srcId }, 'Nothing: start empty'),
+        plans.map((L) => h('option', { value: L.id, selected: L.id === srcId }, `${L.name} (${floorName(floorOf(L))})`)))),
+    h('p', { class: 'hint' }, roof ? 'The roof goes on the floor above, covering those walls. You can resize and turn it on the plan.' : 'The new level goes on the floor above, standing exactly on top of it.'),
+    h('button', { class: 'wide primary', onclick: create }, icon('plus'), 'Create')));
+  setTimeout(() => name.focus(), 50);
+}
+
 /** "+ Dashboard": ask what kind it is, its name and who sees it, then open it for editing. */
 function newDashboard(hm) {
   let kind = 'tiles', isPrivate = false;
@@ -962,7 +1006,7 @@ function newDashboard(hm) {
     if (kind === 'site') {
       const L = makeSite(hm);
       L.name = name.value.trim() || 'Whole site';
-      mutate(hm, (x) => { buildingsOf(x); x.levels.push(L); }, { undoable: false });
+      mutate(hm, (x) => { upgradeSite(x); x.levels.push(L); }, { undoable: false });
       return void show({ homeId: hm.id, kind: 'level', id: L.id });
     }
     if (kind === 'tiles') {
@@ -1018,6 +1062,7 @@ function placesSheet() {
           h('button', { class: 'row-label linkish', 'aria-label': `Open ${d.name}`, onclick: () => show({ homeId: hm.id, kind, id: d.id }) }, h('div', {}, d.name)),
           h('button', { class: 'round small', 'aria-label': `Move ${d.name} up`, disabled: idx === 0, onclick: () => ed(() => list.splice(idx - 1, 0, list.splice(idx, 1)[0])) }, icon('up')),
           h('button', { class: 'round small', 'aria-label': `${d.name}: ${d.private ? 'share with the home' : 'make it only mine'}`, title: d.private ? 'Only me' : 'Shared with the home', onclick: () => ed(() => { if (d.private) delete d.private; else d.private = true; }) }, icon(d.private ? 'lock' : 'home')),
+          h('button', { class: 'round small', 'aria-pressed': String(!d.hideList), 'aria-label': `${d.name}: ${d.hideList ? 'hidden from this list outside edit mode, tap to show it' : 'shown in this list, tap to hide it outside edit mode'}`, title: d.hideList ? 'Hidden from the list' : 'Shown in the list', onclick: () => ed(() => { if (d.hideList) delete d.hideList; else d.hideList = true; }) }, icon(d.hideList ? 'eyeoff' : 'eye')),
           h('button', { class: 'round small', 'aria-label': `Rename ${d.name}`, onclick: () => { const n = prompt('Dashboard name', d.name); if (n && n.trim()) ed(() => (d.name = n.trim())); } }, icon('edit')),
           h('button', { class: 'round small', 'aria-label': `Duplicate ${d.name}`, title: 'Duplicate', onclick: () => {
             const n = prompt('Name of the copy', `${d.name} copy`);
@@ -1045,11 +1090,16 @@ function placesSheet() {
     } else {
       const item = (kind, d) => { const el = menuItem(kind === 'page' ? 'grid' : 'plan', d.name, null, () => go(kind, d.id), d.private ? icon('lock') : null); if (here(kind, d.id)) el.classList.add('sel'); return el; };
       items.push(h('div', { class: 'menu-title sub-title' }, 'Plans'));
-      for (const L of hm.levels) items.push(item('level', L));
-      if ((hm.pages || []).length) items.push(h('div', { class: 'menu-title sub-title' }, 'Widgets'));
-      for (const p of hm.pages || []) items.push(item('page', p));
+      // A dashboard with its eye closed (#116) is left out here, unless it is the one showing.
+      for (const L of hm.levels) if (!L.hideList || here('level', L.id)) items.push(item('level', L));
+      const pages = (hm.pages || []).filter((p) => !p.hideList || here('page', p.id));
+      if (pages.length) items.push(h('div', { class: 'menu-title sub-title' }, 'Widgets'));
+      for (const p of pages) items.push(item('page', p));
     }
-    if (editMode) items.push(h('div', { class: 'btns pad' }, h('button', { class: 'wide ghost', onclick: () => { closeSheet(); newDashboard(hm); } }, icon('plus'), 'Dashboard')));
+    if (editMode) items.push(h('div', { class: 'btns pad' },
+      h('button', { class: 'wide ghost', onclick: () => { closeSheet(); addFloor(hm, false); } }, icon('layers'), 'Add level'),
+      h('button', { class: 'wide ghost', onclick: () => { closeSheet(); addFloor(hm, true); } }, icon('roof'), 'Add roof')),
+      h('div', { class: 'btns pad' }, h('button', { class: 'wide ghost', onclick: () => { closeSheet(); newDashboard(hm); } }, icon('plus'), 'Dashboard')));
     items.push(h('div', { class: 'msep' }));
   }
   if (editMode) items.push(h('div', { class: 'btns pad' },
@@ -1513,9 +1563,10 @@ function settingsSheet() {
   body.append(...nodes(
     device.experimental ? [h('div', { class: 'msep' }), h('div', { class: 'row pad' }, h('div', { class: 'row-label' }, h('div', {}, 'Experimental features are on'), h('div', { class: 'sub' }, 'Photo render, Scaniverse scans and anything else still being tried. Unfinished: they may not work.')),
       h('button', { class: 'chip small', onclick: () => setExperimental(false) }, 'Turn off'))] : null,
+    __DONATE_URL__ ? h('button', { class: 'wide ghost pad-x', onclick: () => supportNote() }, icon('heart'), 'Support Nidorama') : null,
     h('button', { class: 'version-line', onclick: tapVersion }, `Nidorama v${VERSION}`),
     // The licence asks that everyone using the app can get its source.
-    __REPO__ ? h('p', { class: 'hint pad' }, 'Nidorama is free software under the GNU Affero General Public License, version 3. ', h('a', { href: `https://github.com/${__REPO__}`, target: '_blank', rel: 'noopener' }, 'Source code and licence')) : null));
+    __REPO__ ? h('p', { class: 'hint pad' }, 'Nidorama is free software under the GNU Affero General Public License, version 3. ', h('a', { href: `https://github.com/${__REPO__}`, target: '_blank', rel: 'noopener' }, 'Source code and licence'), ' · ', h('a', { href: 'https://nidorama.io', target: '_blank', rel: 'noopener' }, 'nidorama.io')) : null));
   return body;
 }
 
@@ -2445,7 +2496,7 @@ native.onBackButton(() => {
 }, () => launcherEnabled /* as a home screen, Back never leaves */);
 if (native.isNative && device.keepAwake) native.setKeepScreenOn(true);
 view.refineEnabled = device.refine !== false;
-window.__nidorama = { view, testUpdate: (u) => { update = u; askToUpdate(); } }; // handles for automated tests
+window.__nidorama = { view, editor, show, home, setEditMode: (on) => setEditMode(on), testUpdate: (u) => { update = u; askToUpdate(); } }; // handles for automated tests
 
 new ResizeObserver(() => view.resize()).observe(stage);
 onLibraryChange((why) => {

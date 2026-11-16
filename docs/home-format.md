@@ -92,3 +92,11 @@ Materials so far: `timber-dark`, `marble-tile`, `mosaic-tile`, `decking`, `stair
 - v0.21: `buildings: [{ id, name, x, y, rot, roof?: { type: gable | hip | skillion | flat | none, pitch, overhang,
   material: tiles | charcoal | metal | slate | light, turn?, extend?: { n, e, s, w } } }]`; `levels[].building`,
   `levels[].loft`, `levels[].site` (the whole-site dashboard), `levels[].hideNav` / `pages[].hideNav`.
+- v0.22: floors and placements replace buildings (files with `buildings` are converted when opened).
+  `siteV: 2`; `levels[].floor` (0 = ground … 40); `levels[].place: { x, y, rot }` (where the level's 0, 0 stands
+  on the site, and its turn in degrees); `floorHeights: { "<floor>": metres }` (optional exact heights);
+  `levels[].roof: true` (a roof dashboard: nothing to walk in); `levels[].roofs: [{ id, x, y, w, d, rot, type:
+  gable | hip | skillion | flat, pitch, overhang, material, turn? }]` (roof pieces: centre, width, depth and turn;
+  on a level with walls they make it a loft); `levels[].hideList` / `pages[].hideList` (left out of the dashboard
+  list outside edit mode); `levels[].panelView: { kind: 'web', url } | { kind: 'ha', path }` (a web page or a Home
+  Assistant dashboard in the widget panel).

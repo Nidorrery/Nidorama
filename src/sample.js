@@ -2,6 +2,7 @@
 // here, not loaded from a file, and nothing in it comes from a real home. Every device in it is
 // a pretend one (`*.sample_*`) that the demo mode plays along with.
 import { CATALOG, makeObject, uid } from './catalog.js';
+import { outlineBox, newPiece, roofLevel } from './site.js';
 
 export function buildSample() {
   const L = { id: uid('level'), name: 'Ground floor', elevation: 0, ceilingHeight: 2.4, walls: [], rooms: [], floors: [], voids: [], stairs: [], objects: [], lights: [], roomControls: {}, buttons: [] };
@@ -129,16 +130,19 @@ export function buildSample() {
   // ----- shortcuts at the top of More -----
   home.more = [{ id: uid('m'), type: 'all-lights-off', name: 'All lights off', icon: 'power' }, { id: uid('m'), name: 'Heating', entity: 'climate.sample_heating', icon: 'flame' }, { id: uid('m'), name: 'Front door', entity: 'lock.sample_front_door', icon: 'lock' }];
   // ----- the whole site (#111, #112): the cottage with a roof, a shed beside it, and the yard -----
-  home.buildings = [
-    { id: 'main', name: 'Cottage', x: 0, y: 0, rot: 0, roof: { type: 'gable', pitch: 28, overhang: 0.5, material: 'charcoal' } },
-    { id: 'shed', name: 'Shed', x: 11.5, y: 5.2, rot: 0, roof: { type: 'skillion', pitch: 10, overhang: 0.3, material: 'light' } }];
-  const shed = { id: uid('level'), name: 'Shed', building: 'shed', elevation: 0, ceilingHeight: 2.4, walls: [], rooms: [], floors: [], voids: [], stairs: [], objects: [], lights: [], roomControls: {}, buttons: [], viewButtonsAdded: true, dragButtonAdded: true, navFixed: true };
+  // Every plan dashboard stands on a floor and has its own place in the yard (#115); roofs are dashboards too (#114).
+  home.siteV = 2;
+  for (const L of home.levels) { L.floor = 0; L.place = { x: 0, y: 0, rot: 0 }; }
+  const shed = { id: uid('level'), name: 'Shed', floor: 0, place: { x: 11.5, y: 5.2, rot: 0 }, elevation: 0, ceilingHeight: 2.4, walls: [], rooms: [], floors: [], voids: [], stairs: [], objects: [], lights: [], roomControls: {}, buttons: [], viewButtonsAdded: true, dragButtonAdded: true, navFixed: true };
   const sw = (a, b, openings = []) => shed.walls.push({ id: uid('w'), a, b, thickness: 0.12, height: 2.4, exterior: true, openings: openings.map((o) => ({ id: uid('o'), ...o })) });
   sw([0, 0], [3.2, 0]); sw([3.2, 0], [3.2, 2.6]); sw([3.2, 2.6], [0, 2.6], [{ type: 'door', offset: 1.1, width: 0.9, sill: 0, head: 2.04, style: 'hinged' }]); sw([0, 2.6], [0, 0]);
   shed.rooms.push({ id: uid('r'), name: 'Shed', polygon: [[0, 0], [3.2, 0], [3.2, 2.6], [0, 2.6]], floor: 'concrete', labelAt: [1.6, 1.3] });
   shed.lights.push({ id: uid('light'), name: 'Shed light', room: shed.rooms[0].id, kind: 'ceiling', entity: 'light.sample_shed' });
   shed.roomControls[shed.rooms[0].id] = { mainLight: 'light.sample_shed' };
   home.levels.push(shed);
+  const cottage = home.levels[0], cb = outlineBox(cottage);
+  home.levels.push(roofLevel('Roof', 1, { x: 0, y: 0, rot: 0 }, [newPiece([(cb.x0 + cb.x1) / 2, (cb.y0 + cb.y1) / 2], cb.x1 - cb.x0, cb.y1 - cb.y0, { pitch: 28, material: 'charcoal' })]));
+  home.levels.push(roofLevel('Shed roof', 1, { x: 11.5, y: 5.2, rot: 0 }, [newPiece([1.6, 1.3], 3.2, 2.6, { type: 'skillion', pitch: 10, overhang: 0.3, material: 'light' })]));
   const site = { id: uid('level'), name: 'Whole site', site: true, elevation: 0, ceilingHeight: 2.4, walls: [], floors: [], voids: [], stairs: [], objects: [], lights: [], roomControls: {}, buttons: [], viewButtonsAdded: true, dragButtonAdded: true, navFixed: true,
     rooms: [
       { id: uid('yard'), name: 'Driveway', outdoor: true, floor: 'paving', polygon: [[-4, 6.5], [-0.5, 6.5], [-0.5, 14], [-4, 14]], labelAt: [-2.2, 12] },

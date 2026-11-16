@@ -1,6 +1,6 @@
 // The designer: draw walls (by tapping or by exact length), rooms, doors and windows, place and edit
 // furniture, and connect things to Home Assistant entities. Works on the level currently shown.
-import { h, nodes, icon, seg, numField, textField, selectField, entityField, menuItem, modal, pickEntity, pickIcon, iconOf, entityName, pickFile } from './ui.js';
+import { h, nodes, icon, seg, numField, textField, selectField, entityField, menuItem, modal, pickEntity, pickIcon, iconOf, entityName, pickFile, toast } from './ui.js';
 import { mutate, undo, redo, canUndo, canRedo, newLevel, savePhoto } from './store.js';
 import { putBlob, delBlob, shrinkPhoto } from './blobs.js';
 import { pickModel } from './modelpicker.js';
@@ -12,7 +12,12 @@ import { controlRow, editControl, newControl } from './controls.js';
 import { CATALOG, CATEGORIES, FLOOR_MATERIALS, makeObject, uid } from './catalog.js';
 import { snap, round, dist, distToSeg, pointInPoly, pointInObject, objectCorners, centreOf, rotateAbout, polyBounds, wallLength, wallAt, wallDir, wallPoints, wallNearest, bearing } from './geom.js';
 import { thumb } from './thumbs.js';
-import { buildingsOf, buildingOf, levelsOf, ROOF_TYPES, ROOF_MATERIALS, MAIN } from './site.js';
+import { haDashboards, frameGuide, insideHA } from './webpanel.js';
+import { boundsOf, ROOF_TYPES, ROOF_MATERIALS, MAX_FLOOR, floorName, planLevels, placeOf, floorOf, floorsOf, piecesOf, pieceCorners, newPiece, outlineBox, outsideCorners, toSite, fromSite, across, floorBelow } from './site.js';
+
+const rot = (v, deg) => { const r = (deg * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r); return [v[0] * c - v[1] * sn, v[0] * sn + v[1] * c]; };
+const centroid = (pts) => [pts.reduce((a, q) => a + q[0], 0) / pts.length, pts.reduce((a, q) => a + q[1], 0) / pts.length];
+const snapAngle = (a, step = 15) => ((Math.round(a / step) * step) % 360 + 360) % 360;
 
 const SVG = 'http://www.w3.org/2000/svg';
 const s = (tag, attrs, text) => {
@@ -139,6 +144,8 @@ export class Editor {
     const L = this.level, x = this.sel;
     if (!x || !L) return null;
     if (x.type === 'opening') return L.walls.find((w) => w.id === x.wall)?.openings?.find((o) => o.id === x.id) || null;
+    if (x.type === 'piece') return piecesOf(L).find((p) => p.id === x.id) || null;
+    if (x.type === 'place') return this.home.levels.find((q) => q.id === x.id && !q.site) || null;
     const list = { object: L.objects, wall: L.walls, room: L.rooms, light: L.lights, button: L.buttons || [] }[x.type];
     return list.find((i) => i.id === x.id) || null;
   }
@@ -152,6 +159,7 @@ export class Editor {
       if (x.type === 'opening') { const w = L.walls.find((q) => q.id === x.wall); w.openings = w.openings.filter((o) => o !== item); }
       if (x.type === 'light') L.lights = L.lights.filter((l) => l !== item);
       if (x.type === 'button') L.buttons = L.buttons.filter((b) => b !== item);
+      if (x.type === 'piece') L.roofs = L.roofs.filter((p) => p.id !== item.id);
       if (x.type === 'room') { L.rooms = L.rooms.filter((r) => r !== item); delete L.roomControls[item.id]; L.lights = L.lights.filter((l) => !(l.kind === 'ceiling' && l.room === item.id)); }
     });
   }
@@ -169,6 +177,8 @@ export class Editor {
     for (const l of L.lights) if (l.position && !l.fixture && dist(p, l.position) < 0.2) out.push({ type: 'light', id: l.id });
     const objs = L.objects.filter((o) => pointInObject(p, o)).sort((a, b) => b.bounds.max[2] - a.bounds.max[2] || (a.bounds.max[0] - a.bounds.min[0]) * (a.bounds.max[1] - a.bounds.min[1]) - (b.bounds.max[0] - b.bounds.min[0]) * (b.bounds.max[1] - b.bounds.min[1]));
     for (const o of objs) out.push({ type: 'object', id: o.id });
+    for (const q of piecesOf(L)) if (pointInPoly(p, pieceCorners(q, q.overhang ?? 0.5))) out.push({ type: 'piece', id: q.id });
+    if (L.site) for (const x of [...planLevels(this.home)].sort((a, b) => floorOf(b) - floorOf(a))) { const f = this.footCorners(x); if (f && pointInPoly(p, f)) out.push({ type: 'place', id: x.id }); }
     for (const w of L.walls) {
       const r = wallNearest(p, w);
       if (r.d >= w.thickness / 2 + 12 / this.view.pxPerMetre) continue;
@@ -244,7 +254,21 @@ export class Editor {
         return;
       }
     }
+    if (this.tool === 'roof') { Object.assign(this.drag, { kind: 'roofRect', a: this.snapPoint(p) }); return; }
     const item = this.selected();
+    if (this.tool === 'select' && item && (this.sel.type === 'piece' || this.sel.type === 'place')) {
+      const tol = 18 / this.view.pxPerMetre;
+      if (this.sel.type === 'piece') {
+        const cs = pieceCorners(item), ci = cs.findIndex((c) => dist(c, p) < tol);
+        if (ci >= 0) return void Object.assign(this.drag, { kind: 'pieceCorner', ci, orig: { ...item }, opp: cs[(ci + 2) % 4] });
+        if (dist(this.turnHandle(cs), p) < tol) return void Object.assign(this.drag, { kind: 'pieceTurn', orig: { ...item } });
+        if (pointInPoly(p, pieceCorners(item, item.overhang ?? 0.5))) return void Object.assign(this.drag, { kind: 'pieceMove', orig: { ...item } });
+      } else {
+        const f = this.footCorners(item);
+        if (f && dist(this.turnHandle(f), p) < tol) return void Object.assign(this.drag, { kind: 'placeTurn', orig: { ...placeOf(item) }, centre: centroid(f) });
+        if (f && pointInPoly(p, f)) return void Object.assign(this.drag, { kind: 'placeMove', orig: { ...placeOf(item) } });
+      }
+    }
     if (this.tool === 'select' && item) {
       const tol = 16 / this.view.pxPerMetre;
       if (this.sel.type === 'room') {
@@ -303,7 +327,18 @@ export class Editor {
       d.pos = [round(snap(p[0], this.btnGrid)), round(snap(p[1], this.btnGrid))];
     } else if (d.kind === 'light') {
       d.pos = [snap(p[0]), snap(p[1])];
-    } else if (d.kind === 'room') d.b = this.snapPoint(p);
+    } else if (d.kind === 'room' || d.kind === 'roofRect') d.b = this.snapPoint(p);
+    else if (d.kind === 'pieceMove') d.piece = { ...d.orig, x: round(d.orig.x + snap(p[0] - d.p0[0])), y: round(d.orig.y + snap(p[1] - d.p0[1])) };
+    else if (d.kind === 'pieceCorner') { // the opposite corner stays put
+      const q = this.snapPoint(p), v = rot([q[0] - d.opp[0], q[1] - d.opp[1]], -(d.orig.rot || 0));
+      const w = Math.max(0.5, Math.abs(v[0])), dd = Math.max(0.5, Math.abs(v[1])), half = rot([Math.sign(v[0] || 1) * w / 2, Math.sign(v[1] || 1) * dd / 2], d.orig.rot || 0);
+      d.piece = { ...d.orig, w: round(w), d: round(dd), x: round(d.opp[0] + half[0]), y: round(d.opp[1] + half[1]) };
+    } else if (d.kind === 'pieceTurn') d.piece = { ...d.orig, rot: snapAngle((Math.atan2(p[1] - d.orig.y, p[0] - d.orig.x) * 180) / Math.PI + 90) };
+    else if (d.kind === 'placeMove') d.place = this.snapPlace(item, { ...d.orig, x: round(d.orig.x + snap(p[0] - d.p0[0])), y: round(d.orig.y + snap(p[1] - d.p0[1])) });
+    else if (d.kind === 'placeTurn') { // turn about the middle of its footprint, in 15° steps
+      const r = snapAngle((Math.atan2(p[1] - d.centre[1], p[0] - d.centre[0]) * 180) / Math.PI + 90), local = fromSite(d.orig, d.centre), at = rot(local, r);
+      d.place = { x: round(d.centre[0] - at[0]), y: round(d.centre[1] - at[1]), rot: r };
+    }
     this.draw();
   }
 
@@ -357,6 +392,15 @@ export class Editor {
         const vb = this.view.bounds, off = d.pos[0] < vb.x0 - 0.4 || d.pos[0] > vb.x1 + 0.4 || d.pos[1] < vb.y0 - 0.4 || d.pos[1] > vb.y1 + 0.4;
         if (off && this.ctx.freePosAt) this.change((L) => { const btn = L.buttons.find((q) => q.id === item.id); delete btn.at; btn.dock = true; btn.pos = this.ctx.freePosAt(e.clientX, e.clientY); });
         else this.change((L) => (L.buttons.find((q) => q.id === item.id).at = [...d.pos]), { panel: false });
+      } else if (d.piece) {
+        this.change((L) => Object.assign(L.roofs.find((q) => q.id === d.piece.id), d.piece));
+      } else if (d.place) {
+        const id = this.sel.id;
+        this.change(() => (this.home.levels.find((q) => q.id === id).place = d.place));
+      } else if (d.kind === 'roofRect' && d.b && Math.abs(d.b[0] - d.a[0]) > 0.4 && Math.abs(d.b[1] - d.a[1]) > 0.4) {
+        const piece = newPiece([round((d.a[0] + d.b[0]) / 2), round((d.a[1] + d.b[1]) / 2)], round(Math.abs(d.b[0] - d.a[0])), round(Math.abs(d.b[1] - d.a[1])));
+        this.tool = 'select'; this.sel = { type: 'piece', id: piece.id };
+        this.change((L) => (L.roofs ||= []).push(piece));
       } else if (d.kind === 'room' && d.b && Math.abs(d.b[0] - d.a[0]) > 0.3 && Math.abs(d.b[1] - d.a[1]) > 0.3) {
         const x0 = Math.min(d.a[0], d.b[0]), x1 = Math.max(d.a[0], d.b[0]), y0 = Math.min(d.a[1], d.b[1]), y1 = Math.max(d.a[1], d.b[1]);
         this.addArea([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
@@ -373,6 +417,7 @@ export class Editor {
       const tx = e.clientX - r.left, ty = e.clientY - r.top;
       if (Math.abs(tx - mx) < 46 && Math.abs(ty - my) < 30) { this.focus = ty < my ? 'Length' : 'Angle'; this.renderPanel(); return; }
     }
+    if (this.tool === 'roof') return;
     if (this.tool === 'door' || this.tool === 'window') return this.addOpeningAt(p, this.tool);
     if (this.tool === 'button') return this.addButton([round(snap(p[0], this.btnGrid)), round(snap(p[1], this.btnGrid))]);
     if (this.tool === 'furniture' && this.placing) return this.place(this.placing, [snap(p[0]), snap(p[1])]);
@@ -383,6 +428,94 @@ export class Editor {
       this.tool = 'select';
       this.select(hits.length ? hits[(i + 1) % hits.length] : null); // tapping again cycles to what is underneath
     }
+  }
+
+  // ---------- roofs and the site (#114, #115) ----------
+  /** A plan level's footprint on the site: the turned box around everything on it. */
+  footCorners(L, place = placeOf(L)) {
+    const b = boundsOf(L);
+    if (b.empty) return null;
+    return [[b.x0, b.y0], [b.x1, b.y0], [b.x1, b.y1], [b.x0, b.y1]].map((q) => toSite(place, q));
+  }
+  /** Where the round turning handle of a box sits: just outside the middle of its first edge. */
+  turnHandle(cs) {
+    const m = [(cs[0][0] + cs[1][0]) / 2, (cs[0][1] + cs[1][1]) / 2], c = centroid(cs), len = dist(m, c) || 1, k = 30 / this.view.pxPerMetre;
+    return [m[0] + ((m[0] - c[0]) / len) * k, m[1] + ((m[1] - c[1]) / len) * k];
+  }
+  /** Snap a level's place so its outside corners meet those of the floor below, when one comes close. */
+  snapPlace(L, place) {
+    const mine = outsideCorners(L).map((q) => toSite(place, q)), tol = Math.max(0.3, 16 / this.view.pxPerMetre);
+    let best = null;
+    for (const B of floorBelow(this.home, L)) for (const q of outsideCorners(B).map((x) => toSite(placeOf(B), x)))
+      for (const m of mine) { const dd = dist(m, q); if (dd < tol && (!best || dd < best.d)) best = { d: dd, dx: q[0] - m[0], dy: q[1] - m[1] }; }
+    return best ? { ...place, x: round(place.x + best.dx), y: round(place.y + best.dy) } : place;
+  }
+  /** A roof piece over the outside walls of another dashboard, lined up with it (#114, #117). */
+  coverWith(id) {
+    const L = this.level, src = this.home.levels.find((x) => x.id === id);
+    if (!src) return;
+    const b = outlineBox(src);
+    if (b.empty) return void toast('That dashboard has no walls to cover yet.');
+    const c = across(src, L, [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2]);
+    const piece = newPiece([round(c[0]), round(c[1])], round(b.x1 - b.x0), round(b.y1 - b.y0), { rot: snapAngle((placeOf(src).rot || 0) - (placeOf(L).rot || 0), 1) });
+    this.tool = 'select'; this.sel = { type: 'piece', id: piece.id };
+    this.change((lv) => (lv.roofs ||= []).push(piece));
+    this.view.bounds = null; this.refit();
+  }
+  roofToolPanel() {
+    const L = this.level, home = this.home, others = planLevels(home).filter((x) => x !== L && x.walls.length);
+    const below = floorBelow(home, L).find((x) => x.walls.length);
+    if (!others.some((x) => x.id === this.coverFrom)) this.coverFrom = (below || others[0])?.id;
+    return h('div', { class: 'stack' },
+      h('p', { class: 'hint' }, 'Drag out a rectangle on the plan for each part of the roof (an L-shaped house is two pieces that meet). Then drag its corners to size it and its round handle to turn it.'),
+      others.length ? [
+        h('label', { class: 'field wide-field' }, h('span', {}, 'Or cover the outside walls of'),
+          h('select', { onchange: (e) => (this.coverFrom = e.target.value) }, others.map((x) => h('option', { value: x.id, selected: x.id === this.coverFrom }, `${x.name} (${floorName(floorOf(x))})`)))),
+        h('button', { class: 'wide primary', onclick: () => this.coverWith(this.coverFrom) }, icon('roof'), 'Add a roof over them')] : null,
+      L.roof || !L.walls.length ? null : h('p', { class: 'hint' }, 'Roof pieces on a level with walls make it a loft: the roof starts half a metre above this floor. For a roof with nothing to walk in under it, use Add roof in the dashboard list.'));
+  }
+  pieceInspector(p) {
+    const edit = (fn) => this.change((L) => fn(L.roofs.find((q) => q.id === p.id)));
+    const flat = p.type === 'flat';
+    return h('div', { class: 'stack' },
+      h('h3', {}, 'Roof piece'),
+      h('label', { class: 'field wide-field' }, h('span', {}, 'Type'),
+        h('select', { onchange: (e) => edit((q) => (q.type = e.target.value)) }, ROOF_TYPES.map(([v, l]) => h('option', { value: v, selected: v === p.type }, l)))),
+      h('div', { class: 'fields' },
+        numField('Width', p.w, (v) => edit((q) => (q.w = v)), { min: 0.5, max: 100, step: 0.1 }),
+        numField('Depth', p.d, (v) => edit((q) => (q.d = v)), { min: 0.5, max: 100, step: 0.1 })),
+      h('div', { class: 'fields' },
+        flat ? null : numField('Pitch', p.pitch ?? 25, (v) => edit((q) => (q.pitch = v)), { min: 3, max: 60, step: 1, unit: '°' }),
+        numField('Overhang', p.overhang ?? 0.5, (v) => edit((q) => (q.overhang = v)), { min: 0, max: 2, step: 0.05 }),
+        numField('Turn', p.rot || 0, (v) => edit((q) => (q.rot = ((v % 360) + 360) % 360)), { min: -360, max: 360, step: 15, unit: '°' })),
+      h('label', { class: 'field wide-field' }, h('span', {}, 'Material'),
+        h('select', { onchange: (e) => edit((q) => (q.material = e.target.value)) }, Object.entries(ROOF_MATERIALS).map(([k, [n]]) => h('option', { value: k, selected: k === (p.material || 'tiles') }, n)))),
+      flat ? null : h('button', { class: 'wide ghost', onclick: () => edit((q) => (q.turn = !q.turn)) }, icon('rotate'), 'Turn the ridge 90°'),
+      h('div', { class: 'btns' },
+        h('button', { class: 'wide', onclick: () => { const c = { ...structuredClone(p), id: uid('roof'), x: round(p.x + 1), y: round(p.y + 1) }; this.sel = { type: 'piece', id: c.id }; this.change((L) => L.roofs.push(c)); } }, icon('copy'), 'Duplicate'),
+        h('button', { class: 'wide ghost danger', onclick: () => this.deleteSelection() }, icon('trash'), 'Delete')),
+      h('p', { class: 'hint' }, 'Drag the corners to resize it, the round handle to turn it, or the middle to move it.'));
+  }
+  /** Where a dashboard stands on the whole site (#115). */
+  placeInspector(L) {
+    const edit = (fn) => { const id = L.id; this.change(() => { const x = this.home.levels.find((q) => q.id === id); x.place = { ...placeOf(x) }; fn(x.place, x); }); };
+    const pl = placeOf(L);
+    return h('div', { class: 'stack' },
+      h('div', { class: 'row' }, h('div', { class: 'row-label' }, h('div', {}, L.name), h('div', { class: 'sub' }, floorName(floorOf(L)) + (L.roof ? ' · roof' : ''))),
+        h('button', { class: 'chip small', onclick: () => this.ctx.openLevel?.(L.id) }, icon('edit'), 'Open')),
+      this.floorSelect(L, (f) => edit((_, x) => (x.floor = f))),
+      h('div', { class: 'fields' },
+        numField('East', pl.x || 0, (v) => edit((q) => (q.x = v)), { min: -500, max: 500, step: 0.1 }),
+        numField('South', pl.y || 0, (v) => edit((q) => (q.y = v)), { min: -500, max: 500, step: 0.1 }),
+        numField('Turn', pl.rot || 0, (v) => edit((q) => (q.rot = ((v % 360) + 360) % 360)), { min: -360, max: 360, step: 15, unit: '°' })),
+      h('div', { class: 'btns' }, ...[['left', -1, 0], ['up', 0, -1], ['down', 0, 1], ['chevron', 1, 0]].map(([ic, dx, dy]) =>
+        h('button', { class: 'round small', 'aria-label': `Move ${L.name} ${{ left: 'west', up: 'north', down: 'south', chevron: 'east' }[ic]}`, onclick: () => edit((q) => { q.x = round((q.x || 0) + dx * 0.25); q.y = round((q.y || 0) + dy * 0.25); }) }, icon(ic))),
+        h('button', { class: 'round small', 'aria-label': `Turn ${L.name}`, onclick: () => edit((q) => (q.rot = ((q.rot || 0) + 90) % 360)) }, icon('rotate'))),
+      h('p', { class: 'hint' }, 'Drag it on the plan; its outside corners catch on those of the floor below. The round handle turns it in 15° steps.'));
+  }
+  floorSelect(L, set) {
+    return h('label', { class: 'field wide-field' }, h('span', {}, 'Floor'),
+      h('select', { onchange: (e) => set(Number(e.target.value)) }, Array.from({ length: MAX_FLOOR + 1 }, (_, f) => h('option', { value: f, selected: f === floorOf(L) }, floorName(f)))));
   }
 
   // ---------- walls ----------
@@ -628,6 +761,38 @@ export class Editor {
       for (let y = Math.floor(b.y0); y <= b.y1; y++) line([b.x0, y], [b.x1, y], y === 0 ? 'grid axis' : 'grid');
     }
     const item = this.selected(), d = this.drag;
+    // The floor below, faintly, so a level or a roof can be lined up with it (#114, #115).
+    if (!L.site) for (const B of floorBelow(this.home, L)) for (const wl of B.walls) if (wl.exterior || !B.walls.some((q) => q.exterior)) line(across(B, L, wl.a), across(B, L, wl.b), 'below');
+    // The whole site: every dashboard's footprint, so it can be picked, dragged and turned.
+    if (L.site) for (const x of planLevels(this.home)) {
+      const on = this.sel?.type === 'place' && this.sel.id === x.id, f = this.footCorners(x, on && d?.place ? d.place : placeOf(x));
+      if (!f) continue;
+      poly(f, 'foot' + (on ? ' sel' : ''));
+      label(centroid(f), x.name, on ? 'dim live' : 'dim', 4);
+      if (on) { const t = this.turnHandle(f); line([(f[0][0] + f[1][0]) / 2, (f[0][1] + f[1][1]) / 2], t, 'sel'); dot(t, 'handle turn'); }
+    }
+    // Roof pieces: outline with the overhang, the walls' line inside it, and the ridge.
+    for (const q0 of piecesOf(L)) {
+      const on = this.sel?.type === 'piece' && this.sel.id === q0.id, q = on && d?.piece ? d.piece : q0;
+      const inner = pieceCorners(q), outer = pieceCorners(q, q.overhang ?? 0.5);
+      poly(outer, 'roofp' + (on ? ' sel' : '')); pl([...inner, inner[0]], 'roofp inner');
+      if (q.type !== 'flat') {
+        const alongX = (q.w >= q.d) !== !!q.turn, half = alongX ? q.w / 2 : q.d / 2, side = alongX ? q.d / 2 : q.w / 2, o = q.overhang ?? 0.5;
+        const inset = q.type === 'hip' ? Math.min(side + o, half + o) : 0;
+        const ends = q.type === 'skillion' ? [[-half - o, side + o], [half + o, side + o]] : [[-half - o + inset, 0], [half + o - inset, 0]];
+        const pts = ends.map((e) => { const v = rot(alongX ? e : [e[1], e[0]], q.rot || 0); return [q.x + v[0], q.y + v[1]]; });
+        line(pts[0], pts[1], 'ridge');
+      }
+      if (on) {
+        inner.forEach((c) => dot(c, 'handle'));
+        const t = this.turnHandle(inner); line([(inner[0][0] + inner[1][0]) / 2, (inner[0][1] + inner[1][1]) / 2], t, 'sel'); dot(t, 'handle turn');
+        label([q.x, q.y], `${fmt(q.w)} × ${fmt(q.d)}${q.rot ? ` · ${q.rot}°` : ''}`, 'dim live', 4);
+      }
+    }
+    if (d?.kind === 'roofRect' && d.b) {
+      poly([d.a, [d.b[0], d.a[1]], d.b, [d.a[0], d.b[1]]], 'preview fill');
+      label([(d.a[0] + d.b[0]) / 2, (d.a[1] + d.b[1]) / 2], `${Math.abs(d.b[0] - d.a[0]).toFixed(2)} × ${Math.abs(d.b[1] - d.a[1]).toFixed(2)} m`, 'dim live');
+    }
     if (d?.kind === 'button' && d.moved && d.pos) { // the grid the button snaps to, around it
       const g = this.btnGrid, n = Math.max(2, Math.min(12, Math.round(1.5 / g)));
       for (let i = -n; i <= n; i++) {
@@ -694,7 +859,7 @@ export class Editor {
   // ---------- panel ----------
   renderPanel() {
     if (!this.active) return;
-    const tools = [['wall', 'wall', 'Wall'], ['room', 'room', 'Area'], ['door', 'door', 'Door'], ['window', 'window', 'Window'], ['furniture', 'sofa', 'Furnish'], ['button', 'target', 'Button']];
+    const tools = [['wall', 'wall', 'Wall'], ['room', 'room', 'Area'], ['door', 'door', 'Door'], ['window', 'window', 'Window'], ['furniture', 'sofa', 'Furnish'], ['button', 'target', 'Button'], ...(this.level?.site ? [] : [['roof', 'roof', 'Roof']])];
     // Plan | Widgets (#94): what the panel is editing. Not while an area is selected (the panel is then that
     // room's), unless that area is where this device starts.
     const picked = this.tool === 'select' ? this.selected() : null;
@@ -731,6 +896,7 @@ export class Editor {
     if (t === 'door' || t === 'window') return h('div', { class: 'stack' },
       h('div', { class: 'seg wrap' }, stylesFor(t).map(([v, l]) => h('button', { class: v === this.openStyle[t] ? 'on' : '', onclick: () => { this.openStyle[t] = v; this.renderPanel(); } }, l))));
     if (t === 'furniture') return this.furniturePanel();
+    if (t === 'roof') return this.roofToolPanel();
     if (t === 'button') return h('div', { class: 'stack' },
       h('p', { class: 'hint' }, 'A button controls any Home Assistant entity: a fan, heater, air conditioner, blind, scene, script… Tap the plan where it should sit (for example in the room it belongs to), then choose what it controls.'),
       this.gridSeg(),
@@ -742,7 +908,7 @@ export class Editor {
       h('p', { class: 'hint' }, 'Buttons beside the plan suit things for the whole floor, such as underfloor heating. For your own drop-down menus use More → Customise menus.'));
     const item = this.selected();
     if (!item) return this.levelPanel();
-    return { object: () => this.objectPanel(item), wall: () => this.wallInspector(item), opening: () => this.openingInspector(item, this.level.walls.find((w) => w.id === this.sel.wall)), room: () => this.roomInspector(item), light: () => this.lightInspector(item), button: () => this.buttonInspector(item) }[this.sel.type]();
+    return { object: () => this.objectPanel(item), wall: () => this.wallInspector(item), opening: () => this.openingInspector(item, this.level.walls.find((w) => w.id === this.sel.wall)), room: () => this.roomInspector(item), light: () => this.lightInspector(item), button: () => this.buttonInspector(item), piece: () => this.pieceInspector(item), place: () => this.placeInspector(item) }[this.sel.type]();
   }
 
   wallTypeSeg() {
@@ -769,53 +935,29 @@ export class Editor {
         h('button', { class: 'wide', onclick: () => { w.start = null; this.renderPanel(); this.draw(); } }, icon('check'), 'Finish'),
         w.first && dist(w.first, w.start) > 0.05 ? h('button', { class: 'wide', onclick: () => this.addWall(w.start, w.first) }, 'Close shape') : null) : null);
   }
-  /** Which building a level belongs to, and whether it is the space under that building's roof (#112). */
-  buildingFields() {
-    const home = this.home, L = this.level, list = buildingsOf(home);
+  /** Which floor of the home this dashboard is, and whether it is a roof (#115, #114). */
+  floorFields() {
+    const L = this.level;
     return h('div', { class: 'stack' },
-      list.length > 1 ? h('label', { class: 'field wide-field' }, h('span', {}, 'Building'),
-        h('select', { onchange: (e) => this.change((lv) => { if (e.target.value === MAIN) delete lv.building; else lv.building = e.target.value; }) },
-          list.map((b) => h('option', { value: b.id, selected: b.id === buildingOf(L) }, b.name)))) : null,
-      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!L.loft, onchange: (e) => this.change((lv) => { if (e.target.checked) lv.loft = true; else delete lv.loft; }) }),
-        'This level is the space under the roof (a loft or attic you can walk in)'));
+      this.floorSelect(L, (f) => this.change((lv) => (lv.floor = f))),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!L.roof, onchange: (e) => this.change((lv) => { if (e.target.checked) lv.roof = true; else delete lv.roof; }) }),
+        'This dashboard is a roof (nothing to walk in under it)'));
   }
-  /** The whole-site dashboard (#112): the buildings in the yard, each with its roof. Inside a building is edited on its own levels. */
+  /** The whole-site dashboard (#115): its floors, the dashboards on each, and where each one stands. */
   sitePanel() {
-    const home = this.home, list = buildingsOf(home);
-    const editB = (id, fn) => this.change(() => fn(this.home.buildings.find((b) => b.id === id)));
-    const roofOf = (b) => b.roof || { type: 'none' };
+    const home = this.home, floors = floorsOf(home).filter((F) => F.levels.length);
+    const setHeight = (f, v) => this.change(() => { const fh = (this.home.floorHeights ||= {}); if (v == null) delete fh[f]; else fh[f] = v; });
     return h('div', { class: 'stack' },
-      h('p', { class: 'hint' }, 'Place each building in the yard and give it a roof. Draw lawn, paving and the pool as areas, fences with the Wall tool, and add outdoor things from Furnish. Inside a building is edited on its own levels.'),
-      list.map((b) => {
-        const r = roofOf(b), lv = levelsOf(home, b.id);
-        return h('div', { class: 'site-building' },
-          h('div', { class: 'row' }, h('div', { class: 'row-label' }, h('div', {}, b.name), h('div', { class: 'sub' }, lv.map((x) => x.level.name + (x.level.loft ? ' (roof space)' : '')).join(' · ') || 'no levels yet')),
-            lv.length ? h('button', { class: 'chip small', onclick: () => this.ctx.openLevel?.(lv[0].level.id) }, icon('edit'), 'Open') : null),
-          textField('Name', b.name, (v) => v && editB(b.id, (x) => (x.name = v))),
-          h('div', { class: 'fields' },
-            numField('East', b.x || 0, (v) => editB(b.id, (x) => (x.x = v)), { min: -500, max: 500, step: 0.1 }),
-            numField('South', b.y || 0, (v) => editB(b.id, (x) => (x.y = v)), { min: -500, max: 500, step: 0.1 }),
-            numField('Turn', b.rot || 0, (v) => editB(b.id, (x) => (x.rot = v)), { min: -360, max: 360, step: 15, unit: '°' })),
-          h('div', { class: 'btns' }, ...[['left', -1, 0], ['up', 0, -1], ['down', 0, 1], ['chevron', 1, 0]].map(([ic, dx, dy]) =>
-            h('button', { class: 'round small', 'aria-label': `Move ${b.name} ${{ left: 'west', up: 'north', down: 'south', chevron: 'east' }[ic]}`, onclick: () => editB(b.id, (x) => { x.x = round((x.x || 0) + dx * 0.5); x.y = round((x.y || 0) + dy * 0.5); }) }, icon(ic))),
-            h('button', { class: 'round small', 'aria-label': `Turn ${b.name}`, onclick: () => editB(b.id, (x) => (x.rot = ((x.rot || 0) + 90) % 360)) }, icon('rotate'))),
-          h('label', { class: 'field wide-field' }, h('span', {}, 'Roof'),
-            h('select', { onchange: (e) => editB(b.id, (x) => { x.roof = { pitch: 25, overhang: 0.5, material: 'tiles', ...(x.roof || {}), type: e.target.value }; }) },
-              [['none', 'No roof'], ...ROOF_TYPES].map(([v, l]) => h('option', { value: v, selected: v === r.type }, l)))),
-          r.type === 'none' ? null : [
-            h('div', { class: 'fields' },
-              r.type === 'flat' ? null : numField('Pitch', r.pitch ?? 25, (v) => editB(b.id, (x) => (x.roof.pitch = v)), { min: 3, max: 60, step: 1, unit: '°' }),
-              numField('Overhang', r.overhang ?? 0.5, (v) => editB(b.id, (x) => (x.roof.overhang = v)), { min: 0, max: 2, step: 0.05 })),
-            h('label', { class: 'field wide-field' }, h('span', {}, 'Material'),
-              h('select', { onchange: (e) => editB(b.id, (x) => (x.roof.material = e.target.value)) }, Object.entries(ROOF_MATERIALS).map(([k, [n]]) => h('option', { value: k, selected: k === (r.material || 'tiles') }, n)))),
-            r.type === 'flat' ? null : h('button', { class: 'wide ghost', onclick: () => editB(b.id, (x) => (x.roof.turn = !x.roof.turn)) }, icon('rotate'), 'Turn the ridge 90°'),
-            h('details', {}, h('summary', {}, 'Stretch the roof beyond the walls'),
-              h('div', { class: 'fields' }, ...[['n', 'North'], ['e', 'East'], ['s', 'South'], ['w', 'West']].map(([k, l]) =>
-                numField(l, r.extend?.[k] || 0, (v) => editB(b.id, (x) => ((x.roof.extend ||= {})[k] = v)), { min: -10, max: 20, step: 0.1 })))),
-          ],
-          b.id !== MAIN ? h('button', { class: 'wide ghost danger', onclick: () => { if (confirm(`Remove the building "${b.name}"? Its levels stay, and move to the main house.`)) this.change(() => { this.home.buildings = this.home.buildings.filter((x) => x.id !== b.id); for (const L of this.home.levels) if (L.building === b.id) delete L.building; }); } }, icon('trash'), 'Remove building') : null);
-      }),
-      h('button', { class: 'wide', onclick: () => this.ctx.addBuilding?.() }, icon('plus'), 'Add a building'));
+      h('p', { class: 'hint' }, 'Every plan dashboard stands on a floor. Tap one on the plan to select it, drag it into place (its outside corners catch on the floor below) and turn it with its round handle. Draw lawn, paving and the pool here as areas, fences with the Wall tool, and outdoor things from Furnish.'),
+      floors.map((F) => h('div', { class: 'site-building' },
+        h('div', { class: 'row' }, h('div', { class: 'row-label' }, h('div', {}, floorName(F.floor)), h('div', { class: 'sub' }, `${fmt(F.z)} above the ground`))),
+        F.floor ? h('div', { class: 'fields' },
+          numField('Height', F.z, (v) => setHeight(F.floor, v), { min: 0, max: 200, step: 0.05 }),
+          home.floorHeights?.[F.floor] != null ? h('button', { class: 'chip small', onclick: () => setHeight(F.floor, null) }, 'Automatic') : null) : null,
+        F.levels.map((x) => h('div', { class: 'row' },
+          h('button', { class: 'row-label link', onclick: () => this.select({ type: 'place', id: x.id }) }, h('div', {}, x.name), h('div', { class: 'sub' }, x.roof ? 'roof' : `${x.walls.length} walls`)),
+          h('button', { class: 'chip small', onclick: () => this.ctx.openLevel?.(x.id) }, icon('edit'), 'Open'))))),
+      h('p', { class: 'hint' }, 'Add a level or a roof under the home in the dashboard list (edit mode).'));
   }
   /** Add the chosen shape from the last corner (or 0, 0). Straight and Round go east; turn them afterwards with the wall's Angle. */
   addShape() {
@@ -875,7 +1017,7 @@ export class Editor {
       h('p', { class: 'hint' }, L.walls.length + L.rooms.length + L.objects.length ? 'Tap something on the plan to edit it. Tap again to reach what is underneath. Drag empty space to move the view.' : 'This level is empty. Start with the Wall or Area tool.'),
       textField('Level name', L.name, (v) => v && this.change((lv) => (lv.name = v))),
       L.site ? null : numField('Ceiling height', L.ceilingHeight || 2.4, (v) => this.change((lv) => (lv.ceilingHeight = v)), { min: 1.8, max: 6, step: 0.05 }),
-      L.site ? this.sitePanel() : this.buildingFields(),
+      L.site ? this.sitePanel() : this.floorFields(),
       h('div', { class: 'btns' },
         h('button', { class: 'wide', onclick: () => this.refit() }, icon('expand'), 'Fit view'),
         h('button', { class: 'wide', onclick: () => this.ctx.addLevel(false) }, icon('layers'), 'Add level')),
@@ -1136,6 +1278,31 @@ export class Editor {
   }
   /** The Widgets side of the panel in edit mode (#94): the widgets shown when no room is selected, edited in place. */
   widgetsTab() {
+    const L = this.level, mode = L.panelView?.kind || 'widgets';
+    const pick = seg([['widgets', 'Widgets'], ['web', 'Web page'], ['ha', 'Home Assistant']], mode, (v) => {
+      if (v === 'widgets') this.change((lv) => delete lv.panelView);
+      else this.change((lv) => (lv.panelView = v === 'ha' ? { kind: 'ha', path: '/lovelace' } : { kind: 'web', url: '' }));
+      if (v === 'ha' && !insideHA()) frameGuide(this.level.panelView, () => this.renderPanel());
+    });
+    if (mode !== 'widgets') return h('div', { class: 'stack' }, pick, this.webTab(L));
+    return h('div', { class: 'stack' }, pick, this.widgetsOnly());
+  }
+  /** The panel as a web page or a Home Assistant dashboard (#118). */
+  webTab(L) {
+    const v = L.panelView;
+    if (v.kind === 'web') return h('div', { class: 'stack' },
+      textField('Web address', v.url || '', (u) => this.change((lv) => (lv.panelView.url = /^[a-z]+:\/\//i.test(u.trim()) || !u.trim() ? u.trim() : `https://${u.trim()}`)), { placeholder: 'https://…', inputmode: 'url' }),
+      h('p', { class: 'hint' }, 'The page fills the panel when no room is selected. Some sites do not allow being shown inside another app; they then stay blank.'));
+    const box = h('div', { class: 'stack' }, h('p', { class: 'hint' }, 'Finding your dashboards…'));
+    haDashboards().then((list) => box.replaceChildren(...nodes(
+      h('label', { class: 'field wide-field' }, h('span', {}, 'Dashboard'),
+        h('select', { onchange: (e) => this.change((lv) => (lv.panelView.path = e.target.value)) },
+          (list.some((d) => d.path === v.path) ? list : [...list, { path: v.path, title: v.path }]).map((d) => h('option', { value: d.path, selected: d.path === v.path }, d.title)))),
+      textField('Or its address in Home Assistant', v.path || '', (u) => u.trim() && this.change((lv) => (lv.panelView.path = '/' + u.trim().replace(/^https?:\/\/[^/]+/, '').replace(/^\/+/, ''))), { placeholder: '/lovelace/0' }),
+      insideHA() ? h('p', { class: 'hint' }, 'Inside the Home Assistant add-on nothing needs setting up.') : h('button', { class: 'wide', onclick: () => frameGuide(this.level.panelView, () => this.renderPanel()) }, icon('help'), 'How to allow it in Home Assistant'))));
+    return box;
+  }
+  widgetsOnly() {
     const L = this.level;
     if (!L.panelPage) return h('div', { class: 'stack' },
       h('p', { class: 'hint' }, 'With no room selected, this panel shows the list of rooms. You can fill it with widgets of your own instead: anything, in sections, tabs and a grid.'),

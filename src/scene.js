@@ -8,7 +8,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { parseGLB } from './gltf.js';
 import { FLOOR_MATERIALS } from './catalog.js';
-import { buildingsOf, levelsOf, roofFrame, toSite, ROOF_MATERIALS } from './site.js';
+import { upgradeSite, planLevels, placeOf, floorOf, levelZ, eaveOf, piecesOf, boundsOf, toSite, ROOF_MATERIALS } from './site.js';
 import { blobURL, loadBlob } from './blobs.js';
 import { fetchPhotoFromHA } from './store.js';
 import { levelBounds, polyBounds, dist, pointInPoly, wallLength, wallAt, wallDir, wallPoints, wallArc } from './geom.js';
@@ -167,7 +167,7 @@ export class NidoramaScene {
   load(home, level, { style = this.styleId, keepView = false } = {}) {
     const lightStates = keepView && this.lights ? [...this.lights.values()].map((l) => [l.def.id, l.on, l.level]) : [];
     this.scene?.traverse((o) => o.geometry?.dispose?.());
-    this.home = home;
+    this.home = upgradeSite(home);
     this.level = level;
     this.styleId = STYLES[style] ? style : 'realistic';
     this.style = STYLES[this.styleId];
@@ -178,7 +178,7 @@ export class NidoramaScene {
     this.lights = new Map();
     this.rooms = new Map();
     this.objects = new Map();
-    this.bounds = level.site ? this._siteBounds() : levelBounds(level);
+    this.bounds = level.site ? this._siteBounds() : boundsOf(level);
     this.simple = !level.footprint; // levels drawn in the app: slab follows the rooms
     this._buildEnvironment();
     if (level.site) this._buildSite();
@@ -188,6 +188,7 @@ export class NidoramaScene {
     this._buildObjects();
     this._buildLights();
     this._buildRooms();
+    if (!level.site) this._buildPieces(level, 0, true);
     for (const [id, on, lvl] of lightStates) this.setLight(id, on, lvl, true);
     this.setNight(this.night);
     if (this.style.overlay) this._overlayOnly();
@@ -674,14 +675,14 @@ export class NidoramaScene {
     }
   }
 
-  // ---------- the whole site (#111, #112): buildings placed in the yard, levels stacked, roofs on top ----------
+  // ---------- the whole site (#111, #112, #115): every plan dashboard placed in the yard on its floor, roofs on top ----------
   _siteBounds() {
     const pts = [];
     const own = levelBounds(this.level);
     if (!own.empty) pts.push([own.x0, own.y0], [own.x1, own.y1]);
-    for (const b of buildingsOf(this.home)) for (const { level } of levelsOf(this.home, b.id)) {
-      const bb = levelBounds(level);
-      if (!bb.empty) for (const p of [[bb.x0, bb.y0], [bb.x1, bb.y0], [bb.x1, bb.y1], [bb.x0, bb.y1]]) pts.push(toSite(b, p));
+    for (const L of planLevels(this.home)) {
+      const bb = boundsOf(L);
+      if (!bb.empty) for (const p of [[bb.x0, bb.y0], [bb.x1, bb.y0], [bb.x1, bb.y1], [bb.x0, bb.y1]]) pts.push(toSite(placeOf(L), p));
     }
     return pts.length ? polyBounds(pts) : { x0: -5, y0: -5, x1: 5, y1: 5, empty: true };
   }
@@ -689,31 +690,40 @@ export class NidoramaScene {
   _buildSite() {
     const root = this.scene, style = this.style, site = this.level, simple = this.simple, peel = this.peel || 'all';
     this.style = { ...style, cut: 99, refine: false }; // whole walls, to the ceiling
-    this.siteRooms = new Map(); // room id → level id, so a tap on a building's room can open that level
+    this.siteRooms = new Map(); // room id → level id, so a tap on a room of the site view can open that level
     try {
-      for (const b of buildingsOf(this.home)) {
-        const g = new THREE.Group();
-        g.position.copy(V(b.x || 0, b.y || 0, 0));
-        g.rotation.y = -THREE.MathUtils.degToRad(b.rot || 0);
-        root.add(g);
-        const lv = levelsOf(this.home, b.id), shown = peel === 'ground' ? lv.slice(0, 1) : lv;
-        for (const { level, z } of shown) {
-          const lg = new THREE.Group();
-          lg.position.y = z;
-          g.add(lg);
-          this.scene = lg; this.level = level; this.simple = !level.footprint;
-          const before = new Set(this.lights.keys());
-          this._buildFloors(); this._buildWalls(); this._buildStairs(); this._buildObjects(); this._buildLights(); this._buildRooms();
-          root.updateMatrixWorld(true);
-          for (const [id, rec] of this.lights) if (!before.has(id)) { const w = lg.localToWorld(V(rec.pos[0], rec.pos[1], rec.pos[2])); rec.pos = [w.x, w.z, w.y]; }
-          for (const r of level.rooms) this.siteRooms.set(r.id, level.id);
-        }
-        const frame = peel === 'all' && b.roof && b.roof.type !== 'none' ? roofFrame(this.home, b) : null;
-        if (frame) { this.scene = g; this._buildRoof(b.roof, frame); }
+      for (const level of planLevels(this.home)) {
+        if (peel === 'ground' && floorOf(level) > 0) continue;
+        if (peel !== 'all' && level.roof) continue;
+        const pl = placeOf(level), lg = new THREE.Group();
+        lg.position.copy(V(pl.x || 0, pl.y || 0, levelZ(this.home, level)));
+        lg.rotation.y = -THREE.MathUtils.degToRad(pl.rot || 0);
+        root.add(lg);
+        this.scene = lg; this.level = level; this.simple = !level.footprint;
+        const before = new Set(this.lights.keys());
+        this._buildFloors(); this._buildWalls(); this._buildStairs(); this._buildObjects(); this._buildLights(); this._buildRooms();
+        if (peel === 'all') this._buildPieces(level, 0);
+        root.updateMatrixWorld(true);
+        for (const [id, rec] of this.lights) if (!before.has(id)) { const w = lg.localToWorld(V(rec.pos[0], rec.pos[1], rec.pos[2])); rec.pos = [w.x, w.z, w.y]; }
+        for (const r of level.rooms) this.siteRooms.set(r.id, level.id);
       }
     } finally {
       this.scene = root; this.style = style; this.level = site; this.simple = simple;
     }
+  }
+  /** A level's roof pieces (#114), each a rectangle turned on its own, starting at the level's eave height. */
+  _buildPieces(level, z, own = false) {
+    const host = this.scene;
+    try {
+      for (const p of piecesOf(level)) {
+        const g = new THREE.Group(), o = p.overhang ?? 0.5;
+        g.position.copy(V(p.x, p.y, z));
+        g.rotation.y = -THREE.MathUtils.degToRad(p.rot || 0);
+        host.add(g);
+        this.scene = g;
+        this._buildRoof(p, { rect: [-p.w / 2 - o, -p.d / 2 - o, p.w / 2 + o, p.d / 2 + o], eave: own ? Math.max(0.02, eaveOf(level)) : eaveOf(level) });
+      }
+    } finally { this.scene = host; }
   }
   /** A roof over a rectangle: gable, hip, skillion or flat, with the ridge along the longer side unless turned. */
   _buildRoof(roof, { rect, eave }) {
@@ -750,7 +760,7 @@ export class NidoramaScene {
     mesh.userData.roof = true;
     this._add(mesh);
   }
-  /** The level a room of the site view belongs to (a building's level), or null for the yard's own areas. */
+  /** The level a room of the site view belongs to, or null for the yard's own areas. */
   siteLevelOf(roomId) { return this.siteRooms?.get(roomId) || null; }
   setPeel(peel) { this.peel = peel; if (this.level?.site) this.load(this.home, this.level, { keepView: true }); }
 
