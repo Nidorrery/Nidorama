@@ -1,0 +1,21 @@
+Nidorama
+Copyright (c) 2026 the Nidorama authors.
+
+Nidorama is free software: you can redistribute it and/or modify it under the terms of the GNU
+Affero General Public License, version 3, as published by the Free Software Foundation (see
+LICENSE). It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+Additional permission (GNU AGPL version 3, section 7). If you distribute this program, or a
+work based on it, through an app store or a similar distribution service (for example Apple's
+App Store or Google Play) whose terms, usage rules or technical measures add restrictions beyond
+those of this licence, you are permitted to do so, provided that the complete corresponding
+source code of what you distribute remains available to its recipients under this licence,
+without those restrictions. This permission covers only the restrictions added by the store;
+everything else in the licence still applies. Anyone who distributes a changed version may keep
+or remove this permission for their version.
+
+The name "Nidorama" and its icon are not covered by this licence: see TRADEMARKS.md.
+
+Bundled third-party work keeps its own licence: three.js and the other libraries in package.json
+(permissive licences), and the Montserrat typeface (SIL Open Font License 1.1).

@@ -26,7 +26,7 @@ can choose which builds your device receives in Settings → Updates.
 ## Licence of contributions
 
 Nidorama is licensed under the GNU Affero General Public License, version 3 (`LICENSE`), with
-the additional permission for app stores described in `README.md`.
+the additional permission for app stores described in `NOTICE`.
 
 There is no agreement to sign. **By contributing, you agree that your contribution is licensed
 under those same terms** (this is also what GitHub's terms of service say for contributions to a
