@@ -4,6 +4,7 @@
 //       photos/   the user's photos            models/   imported 3D models
 //       renders/  finished photo renders       library/  .glb files the user drops in (their own model library)
 //       homes/    homes and dashboards shared with everyone in the household
+//       mymodels/<Home Assistant user id>/models.json   each person's own made models
 //  3. Makes photo renders: a headless browser on this machine runs the same renderer as the app,
 //     for phones and tablets too slow to do it themselves.
 import http from 'node:http';
@@ -24,7 +25,7 @@ const CORE_WS = process.env.CORE_WS || 'ws://supervisor/core/websocket';
 const CORE_URL = process.env.CORE_URL || 'http://homeassistant:8123';
 const CHROMIUM = process.env.CHROMIUM || ['/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => existsSync(p)) || '';
 const INGRESS_IP = '172.30.32.2';
-const KINDS = ['photos', 'models', 'renders', 'library', 'homes']; // homes/ = dashboards shared with the whole household
+const KINDS = ['photos', 'models', 'renders', 'library', 'homes', 'mymodels']; // homes/ = dashboards shared with the whole household; mymodels/<user>/ = each person's own models
 const MAX_UPLOAD = 80 * 1024 * 1024;
 let options = {};
 try { options = JSON.parse(readFileSync(process.env.NIDORAMA_OPTIONS || '/data/options.json', 'utf8')); } catch {}
@@ -114,6 +115,11 @@ async function api(req, res, route) {
   if (!(await allowed(req))) return json(res, 401, { error: 'A Home Assistant access token is needed.' });
   const [head, ...rest] = route.split('/');
 
+  // Who is asking (#131): through Home Assistant's ingress, the signed-in person's user id, so each person's own models stay theirs.
+  if (head === 'whoami') {
+    const id = String(req.headers['x-remote-user-id'] || '');
+    return json(res, 200, { id: /^[\w-]{4,64}$/.test(id) ? id : null });
+  }
   if (head === 'info') {
     return json(res, 200, {
       version, folder: ASSETS,

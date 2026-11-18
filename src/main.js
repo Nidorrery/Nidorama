@@ -20,6 +20,7 @@ import { upgradeFile } from './legacy.js';
 import { webPanel, viewUrl } from './webpanel.js';
 import { startAlarms } from './widgetviews.js';
 import { Editor } from './editor.js';
+import { syncMyModels } from './mymodels.js';
 import { renderPage, newPage, roomControlsOf } from './dashboard.js';
 import { controlRow as ctlRow } from './controls.js';
 import * as native from './native.js';
@@ -107,6 +108,7 @@ const editor = new Editor({
     changed: () => { buildLabels(); buildPlanButtons(); renderDock(); ensureDemoEntities(); syncFromStates(); renderNav(); },
     done: () => setEditMode(false),
     scan: (o) => startScan(o),
+    saveText: (name, text) => saveText(name, text),
     experimental: () => !!device.experimental,
     actions: () => widgetActions,
     freePosAt: (x, y) => freePosAt(x, y),
@@ -158,7 +160,7 @@ let syncedWith = null;
 hub.on((kind, id, p) => {
   if (kind === 'status') {
     renderStatus();
-    if (p === hub.ha && p.status === 'connected' && syncedWith !== p) { syncedWith = p; syncWithHA(p); setTimeout(findMusicAssistant, 1500); }
+    if (p === hub.ha && p.status === 'connected' && syncedWith !== p) { syncedWith = p; Promise.resolve(syncWithHA(p)).catch(() => {}).finally(() => syncMyModels(p)); setTimeout(findMusicAssistant, 1500); }
     if (openSheet === 'settings' && !document.activeElement?.matches('input')) renderSheet();
   }
   syncFromStates();

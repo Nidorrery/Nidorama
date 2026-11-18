@@ -1,7 +1,8 @@
 // Small pictures of catalogue furniture (#52): each item is drawn once with a tiny off-screen
 // three.js view and kept as an image, so the furniture list shows what a piece looks like.
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { tiltMesh } from './models.js';
+import { partGeometry } from './shapes.js';
 
 const cache = new Map();
 let renderer = null, idle = null;
@@ -23,13 +24,11 @@ function build(item) {
   for (const [a, b, c, e, f, k, color, opts = {}] of item.parts) {
     const sx = (e - a) * w, sy = (k - c) * hgt, sz = (f - b) * d;
     if (sx <= 0 || sy <= 0 || sz <= 0) continue;
-    let geo;
-    if (opts.shape === 'cylinder') { geo = new THREE.CylinderGeometry(0.5, 0.5, 1, 28); geo.scale(sx, sy, sz); }
-    else if (opts.radius) geo = new RoundedBoxGeometry(sx, sy, sz, 3, Math.min(opts.radius, sx / 2, sy / 2, sz / 2) * 0.999);
-    else geo = new THREE.BoxGeometry(sx, sy, sz);
+    const geo = partGeometry(opts, sx, sy, sz, 28);
     const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8, transparent: opts.opacity != null, opacity: opts.opacity ?? 1 });
     const m = new THREE.Mesh(geo, mat);
     m.position.set(((a + e) / 2 - 0.5) * w, ((c + k) / 2) * hgt, ((b + f) / 2 - 0.5) * d);
+    tiltMesh(THREE, m, opts.tilt);
     g.add(m);
   }
   return g;
@@ -37,7 +36,7 @@ function build(item) {
 
 /** A picture (data URL) of a catalogue item, `px` points square, seen from the front at three-quarter height. */
 export function thumb(item, px = 72) {
-  const key = `${item.id}:${px}`;
+  const key = `${item.id}:${item.rev || 0}:${px}`;
   if (cache.has(key)) return cache.get(key);
   let url = '';
   try {

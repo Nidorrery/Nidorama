@@ -1010,3 +1010,49 @@ textarea.yaml { font: 12px/1.45 ui-monospace, 'Roboto Mono', Menlo, monospace; w
 .ent-dot.hidden { display: none; }
 .nido-colours > summary { cursor: pointer; padding: 10px 12px; font-weight: 600; display: flex; gap: 8px; align-items: baseline; }
 .nido-colours .sub { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+/* Furnish search, Make your own and the model maker (#131, #132, #133) */
+.search-row { display: flex; align-items: center; gap: 8px; padding: 0 12px; height: 44px; border-radius: 22px; background: var(--chip); border: 1px solid var(--line); }
+.search-row svg { flex: 0 0 20px; opacity: .7; }
+.furnish-search { flex: 1; border: none; background: transparent; color: inherit; font: inherit; font-size: 15px; outline: none; min-width: 0; }
+.furnish-results h3 { margin: 12px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.cat-item { position: relative; }
+.make-own .own-card { display: block; width: 100%; text-align: left; padding: 12px 14px; margin: 8px 0 0; border-radius: 16px; border: 1px solid var(--line); background: var(--chip); color: inherit; font: inherit; cursor: pointer; }
+.make-own .own-card.hi { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); cursor: default; }
+.make-own .own-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 15px; }
+.make-own .steps-list { margin: 6px 0 10px; padding-left: 20px; font-size: 13.5px; line-height: 1.45; }
+.share-model .note-box { font-size: 13px; line-height: 1.5; padding: 10px 12px; border-radius: 12px; background: var(--chip); border: 1px solid var(--line); margin: 8px 0; }
+.share-model textarea { width: 100%; box-sizing: border-box; font: inherit; border-radius: 10px; padding: 8px; background: var(--chip); color: inherit; border: 1px solid var(--line); }
+.maker { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: var(--bg, #f4f1ea); color: var(--ink, #222); padding: max(10px, env(safe-area-inset-top)) 12px max(10px, env(safe-area-inset-bottom)); box-sizing: border-box; gap: 8px; }
+.maker-head { display: flex; align-items: center; gap: 8px; }
+.maker-name { flex: 1; min-width: 0; font: inherit; font-size: 18px; font-weight: 600; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--chip); color: inherit; }
+.maker-hint { margin: 0; }
+.maker-body { flex: 1; min-height: 0; display: flex; gap: 12px; }
+.maker-left { flex: 1.3; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.maker-view { flex: 1; min-height: 200px; border-radius: 20px; overflow: hidden; background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--chip) 80%, #fff 6%), var(--chip)); border: 1px solid var(--line); touch-action: none; }
+.maker-canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+.maker-dims { font-size: 12.5px; color: var(--muted); }
+.maker-parts { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.maker-parts .chip { flex: 0 0 auto; }
+.maker-parts .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.maker-insp { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 20px; background: var(--panel, #fff); border: 1px solid var(--line); }
+.maker-sub { font-weight: 600; font-size: 13px; margin-top: 4px; }
+.maker-sub .sub { font-weight: 400; color: var(--muted); }
+.maker-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.maker-foot .wide { flex: 1 1 150px; }
+.maker-cat { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.maker-cat select { max-width: 190px; }
+@media (max-width: 760px) {
+  .maker-body { flex-direction: column; overflow-y: auto; }
+  .maker-view { flex: 0 0 34vh; }
+  .maker-insp { flex: none; overflow: visible; }
+}
+.maker-insp > * { flex-shrink: 0; }
+.maker-insp .seg { display: flex; }
+.maker-insp .seg button { flex: 1; }
+.maker-view { position: relative; }
+.maker-readout { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); padding: 6px 12px; border-radius: 14px; background: rgba(15, 20, 18, .82); color: #fff; font-size: 13px; pointer-events: none; white-space: nowrap; }
+.maker-adds { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.maker-adds .sub { font-size: 12.5px; color: var(--muted); margin-right: 2px; }
+.maker-tools { display: flex; gap: 6px; flex-wrap: wrap; }
+.maker-insp .seg.wrap { flex-wrap: wrap; }
+.maker-insp .seg.wrap button { flex: 1 1 28%; }

@@ -74,6 +74,8 @@ const ICON = {
   orbit: '<ellipse cx="12" cy="12" rx="9.500" ry="4"/><circle cx="12" cy="12" r="2"/><path d="m18.500 6.500 2.200 2.400-3.100.4"/>',
   compass: '<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2.2 5.3-5.3 2.2 2.2-5.3z"/>',
   cube: '<path d="m12 3 8 4.500v9L12 21l-8-4.500v-9z"/><path d="m4 7.500 8 4.500 8-4.500M12 12v9"/>', expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.500 4.500"/>', share: '<path d="M12 4v11M7.500 8.500 12 4l4.500 4.500"/><path d="M5 13v6h14v-6"/>',
+  brush: '<path d="M14.500 4.500 19.500 9.500 11 18l-5-5z"/><path d="M6 13c-2 0-3 1.500-3 3.500S2 20 2 20s3 .5 4.500-1S8 16 6 13z"/>',
 };
 export const ICON_CHOICES = ['bulb', 'flame', 'fan', 'snow', 'thermo', 'blind', 'tv', 'music', 'lock', 'car', 'water', 'plug', 'moon', 'sun', 'leaf', 'bell', 'camera', 'play', 'auto', 'power', 'star', 'home'];
 export const icon = (name) => h('span', { class: 'ico', html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[name] || ICON.bulb}</svg>` });

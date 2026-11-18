@@ -108,3 +108,14 @@ Materials so far: `timber-dark`, `marble-tile`, `mosaic-tile`, `decking`, `stair
   finish paint | render | brick | sandstone | weatherboard | timber | stone | tiles); `openings[].trim` (a door's
   frame colour; a window's frame stays `color`); `buttons[].app: 'ha' | 'ma' | 'homey'` (the button opens that app).
 - v0.25: `objects[].dot` and `lights[].dot`: the colour (`#rrggbb`) of that entity's dot in the Nido plan styles.
+- v0.26: `objects[].parts[].tilt: [a, b, c]` degrees, turning the part about its own centre (a: top leans to the back,
+  b: top leans to the right, c: turns clockwise seen from above); `parts[].name`. `objects[].fromModel` (placed from
+  My models or the community) and `objects[].myModel` (its shape was changed in the model maker; the copy kept in
+  My models). Model files (`nidorama.model/1`, `src/models.js`): `{ schema, id, name, category, size: [w, d, h],
+  light?: { z }, parts: [{ name, min, max, color, shape?, radius?, opacity?, tilt? }] }`, in metres from the model's
+  back-left corner on the floor; categories in `MODEL_CATEGORIES`.
+- v0.27: part `shape` may also be `sphere`, `dome`, `cone` (`top` / `bottom`: each end's width as a share, default 0 and 1)
+  or `wedge` (`slope`: front (default) | back | left | right, the side that comes down to nothing); `axis` `x` | `y` lays a
+  cylinder or cone down (drawn by `src/shapes.js`; every shape fills its part's box). Model files may have `z` (placed at
+  height). `home.models[]`: the models placed in this home (model-file form), shared with the household; short
+  furniture `{ kind, at }` may name one of them.

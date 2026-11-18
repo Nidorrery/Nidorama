@@ -15,6 +15,9 @@ import { thumb } from './thumbs.js';
 import { FINISHES, SWATCHES, finishName, finishColor } from './finishes.js';
 import { haDashboards, frameGuide, insideHA } from './webpanel.js';
 import { dotColour, dotKindOf } from './themes.js';
+import { MODEL_CATEGORIES, categoryName, cleanModel, modelFile, modelToItem, itemToModel, objectToModel, applyModelToObject, scaleOf, mirroredOptions, newModelId, guideFile, matches, communityCached, fetchCommunity, communityShare, COMMUNITY_LICENCE } from './models.js';
+import { myModels, keepModel, forgetModel, onMyModels } from './mymodels.js';
+import { openModelMaker } from './modelmaker.js';
 import { boundsOf, ROOF_TYPES, ROOF_MATERIALS, MAX_FLOOR, floorName, planLevels, placeOf, floorOf, floorsOf, piecesOf, pieceCorners, newPiece, outlineBox, outsideCorners, toSite, fromSite, across, floorBelow } from './site.js';
 
 const rot = (v, deg) => { const r = (deg * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r); return [v[0] * c - v[1] * sn, v[0] * sn + v[1] * c]; };
@@ -70,7 +73,7 @@ export function rotateObject(L, o, deg) {
 /** Flip an object left ↔ right (a chaise moves to the other end of its sofa). */
 export function mirrorObject(L, o) {
   const c = centreOf(o);
-  for (const p of o.parts) { const a = p.min[0], b = p.max[0]; p.min[0] = round(2 * c[0] - b); p.max[0] = round(2 * c[0] - a); }
+  for (const p of o.parts) { const a = p.min[0], b = p.max[0]; p.min[0] = round(2 * c[0] - b); p.max[0] = round(2 * c[0] - a); Object.assign(p, mirroredOptions(p)); if (p.top === 0) delete p.top; if (p.bottom === 1) delete p.bottom; }
   for (const l of L.lights) {
     if (l.fixture !== o.id || !l.position) continue;
     const q = rotateAbout(l.position, c, -(o.rotation || 0)), m = rotateAbout([2 * c[0] - q[0], q[1]], c, o.rotation || 0);
@@ -82,6 +85,7 @@ function lightsOf(L, o) { return L.lights.filter((l) => l.fixture === o.id); }
 export class Editor {
   constructor({ view, stage, panel, ctx }) {
     Object.assign(this, { view, stage, panel, ctx });
+    onMyModels(() => { if (this.active && this.tool === 'furniture') this._fillFurnish?.(); });
     this.active = false;
     this.tool = 'select';
     this.sel = null;
@@ -623,10 +627,12 @@ export class Editor {
     const room = this.level.rooms.find((r) => pointInPoly(at, r.polygon))?.id || null;
     const { object, light } = makeObject(item, at[0], at[1], room);
     if (item.model) object.model = item.model;
+    const model = item.mine || item.community ? [...myModels(), ...(this.home.models || []), ...communityCached()].find((m) => m.id === item.id) : null;
+    if (model) object.fromModel = model.id; // placed from My models or the community: it follows the model when the model changes
     this.placing = null;
     this.tool = 'select';
     this.sel = { type: 'object', id: object.id };
-    this.change((L) => { L.objects.push(object); if (light) L.lights.push(light); });
+    this.change((L) => { L.objects.push(object); if (light) L.lights.push(light); if (model) this.homeKeeps(model); });
   }
   /** Swap what an object looks like for another catalogue item, keeping its name, entity, lights, place and angle. */
   replaceLook(o, item) {
@@ -634,19 +640,24 @@ export class Editor {
       const ob = L.objects.find((q) => q.id === o.id), c = centreOf(ob);
       const { object: fresh } = makeObject(item, c[0], c[1], ob.room);
       Object.assign(ob, { parts: fresh.parts, bounds: fresh.bounds, kind: item.id });
+      delete ob.myModel; delete ob.fromModel;
+      const model = item.mine ? this.allMine().find((m) => m.id === item.id) : null;
+      if (model) { ob.fromModel = model.id; this.homeKeeps(model); }
       const z = item.light ? (item.z || 0) + item.light.z : fresh.bounds.max[2];
       for (const l of L.lights) if (l.fixture === ob.id && l.position) l.position = [round(c[0]), round(c[1]), round(z)];
     });
   }
   chooseLook(o) {
-    let cat = CATALOG.find((i) => i.id === o.kind)?.cat || this.cat;
+    const mine = this.allMine().map(modelToItem);
+    const cats = [...(mine.length ? ['My models'] : []), ...CATEGORIES];
+    let cat = o.fromModel && mine.length ? 'My models' : CATALOG.find((i) => i.id === o.kind)?.cat || (CATEGORIES.includes(this.cat) ? this.cat : CATEGORIES[0]);
     const body = h('div', { class: 'menu' });
     const close = modal(body);
     const draw = () => body.replaceChildren(...nodes(
       h('div', { class: 'panel-head' }, h('h2', {}, `Change the look of ${o.name}`), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
       h('p', { class: 'hint' }, 'Only the shape and colours change. Its name, connected entity, light, position and angle are kept.'),
-      h('div', { class: 'cats' }, CATEGORIES.map((c) => h('button', { class: 'chip small' + (c === cat ? ' on' : ''), onclick: () => { cat = c; draw(); } }, c))),
-      h('div', { class: 'look-list' }, CATALOG.filter((i) => i.cat === cat).map((i) => this.catItem(i, i.id === o.kind, () => { close(); this.replaceLook(o, i); }, 'Use this look')))));
+      h('div', { class: 'cats' }, cats.map((c) => h('button', { class: 'chip small' + (c === cat ? ' on' : ''), onclick: () => { cat = c; draw(); } }, c))),
+      h('div', { class: 'look-list' }, (cat === 'My models' ? mine : CATALOG.filter((i) => i.cat === cat)).map((i) => this.catItem(i, i.id === o.kind || i.id === o.fromModel, () => { close(); this.replaceLook(o, i); }, 'Use this look')))));
     draw();
   }
   /**
@@ -989,27 +1000,242 @@ export class Editor {
   }
 
   furniturePanel() {
+    // Search across the catalogue, My models and the community (#132); the list redraws as you type, the field keeps its place.
+    const results = h('div', { class: 'furnish-results' });
+    const fill = () => results.replaceChildren(...nodes(this.furnishList()));
+    this._fillFurnish = fill;
+    const search = h('input', { type: 'search', class: 'furnish-search', placeholder: 'Search furniture, your models, the community', value: this.query || '', 'aria-label': 'Search furniture', autocomplete: 'off', oninput: (e) => { this.query = e.target.value; fill(); } });
+    fill();
     return h('div', { class: 'stack' },
       h('p', { class: 'hint' }, this.placing ? `Tap the plan to place the ${this.placing.name.toLowerCase()}.` : 'Choose something, then tap the plan to place it.'),
-      h('button', { class: 'wide', onclick: () => this.placeModel() }, icon('cube'), 'Realistic 3D models…'),
-      h('div', { class: 'cats' }, CATEGORIES.map((c) => h('button', { class: 'chip small' + (c === this.cat ? ' on' : ''), onclick: () => { this.cat = c; this.renderPanel(); } }, c))),
-      h('div', { class: 'catalog' }, CATALOG.filter((i) => i.cat === this.cat).map((i) => this.catItem(i, this.placing === i, () => { this.placing = i; this.renderPanel(); }, 'Place it'))));
+      h('label', { class: 'search-row' }, icon('search'), search),
+      h('div', { class: 'btns' },
+        h('button', { class: 'wide primary', onclick: () => this.makeOwn() }, icon('plus'), 'Make your own'),
+        h('button', { class: 'wide', onclick: () => this.placeModel() }, icon('cube'), 'Realistic 3D models…')),
+      results);
+  }
+  /** What Furnish lists: the search results, or one category (My models and Community are categories too). */
+  furnishList() {
+    const q = (this.query || '').trim(), mine = this.allMine(), comm = communityCached();
+    const pick = (i) => () => { this.placing = i; this.renderPanel(); };
+    const mineItem = (m) => { const i = modelToItem(m); return this.catItem(i, this.placing?.id === i.id, pick(i), 'Place it', this.myModelActions(m)); };
+    const commItem = (m) => { const i = { ...modelToItem(m), mine: false, community: true, cat: `by ${m.by}` }; return this.catItem(i, this.placing?.id === i.id, pick(i), 'Place it', this.communityActions(m)); };
+    const loadCommunity = () => {
+      if (this._communityLoading) return;
+      this._communityLoading = true;
+      fetchCommunity().then(() => { this._communityError = ''; }, (e) => { this._communityError = e.message || String(e); }).finally(() => { this._communityLoading = false; this._fillFurnish?.(); });
+    };
+    if (q) {
+      if (!comm.length && !this._communityTried) { this._communityTried = true; loadCommunity(); }
+      const cat = CATALOG.filter((i) => matches(i, q)), my = mine.filter((m) => matches({ name: m.name, cat: categoryName(m.category), id: m.category }, q)), co = comm.filter((m) => matches({ name: m.name, cat: categoryName(m.category), id: m.category }, q));
+      if (!cat.length && !my.length && !co.length) return [h('p', { class: 'hint' }, `Nothing found for "${q}". Try another word, or make your own.`)];
+      return [
+        my.length ? [h('h3', {}, 'My models'), h('div', { class: 'catalog' }, my.map(mineItem))] : null,
+        cat.length ? [h('h3', {}, 'Furniture'), h('div', { class: 'catalog' }, cat.map((i) => this.catItem(i, this.placing === i, pick(i), 'Place it', null, i.cat)))] : null,
+        co.length ? [h('h3', {}, 'Community'), h('div', { class: 'catalog' }, co.map(commItem))] : null,
+      ];
+    }
+    const cats = [...(mine.length ? ['My models'] : []), ...CATEGORIES, 'Community'];
+    if (!cats.includes(this.cat)) this.cat = cats[0];
+    const chips = h('div', { class: 'cats' }, cats.map((c) => h('button', { class: 'chip small' + (c === this.cat ? ' on' : ''), onclick: () => { this.cat = c; this._fillFurnish?.(); } }, c === 'My models' ? `My models · ${mine.length}` : c)));
+    if (this.cat === 'My models') return [chips, h('div', { class: 'catalog' }, mine.map(mineItem))];
+    if (this.cat === 'Community') {
+      if (!comm.length && !this._communityTried) { this._communityTried = true; loadCommunity(); }
+      return [chips,
+        h('p', { class: 'hint' }, 'Furniture other people made and shared. Make your own, then share it from My models.'),
+        this._communityLoading && !comm.length ? h('p', { class: 'hint' }, 'Looking for community models…') : null,
+        this._communityError && !comm.length ? h('p', { class: 'hint bad' }, `The community models could not be reached: ${this._communityError}`) : null,
+        !this._communityLoading && !this._communityError && !comm.length ? h('p', { class: 'hint' }, 'No community models yet. Be the first to share one!') : null,
+        h('div', { class: 'catalog' }, comm.map(commItem)),
+        h('button', { class: 'wide ghost', onclick: () => { this._communityTried = true; fetchCommunity(true).then(() => (this._communityError = ''), (e) => (this._communityError = e.message)).finally(() => this._fillFurnish?.()); } }, icon('update'), 'Look again')];
+    }
+    return [chips, h('div', { class: 'catalog' }, CATALOG.filter((i) => i.cat === this.cat).map((i) => this.catItem(i, this.placing === i, pick(i), 'Place it')))];
   }
   /** One catalogue item: its picture (tap it to see it bigger) and its name (tap to choose it). */
-  catItem(i, on, pick, action) {
+  catItem(i, on, pick, action, extra = null, note = null) {
     const pic = thumb(i);
     return h('div', { class: 'cat-item' + (on ? ' on' : '') },
-      h('button', { class: 'thumb', 'aria-label': `See the ${i.name.toLowerCase()} bigger`, title: 'See it bigger', onclick: () => this.showItem(i, pick, action) },
+      h('button', { class: 'thumb', 'aria-label': `See the ${i.name.toLowerCase()} bigger`, title: 'See it bigger', onclick: () => this.showItem(i, pick, action, extra) },
         pic ? h('img', { src: pic, alt: '', width: 56, height: 56 }) : h('span', { class: 'swatch', style: `background:${i.parts.at(-1)[6]}` })),
-      h('button', { class: 'cat-pick', onclick: pick }, h('span', { class: 'grow' }, i.name, h('span', { class: 'sub' }, `${len(i.size[0])} × ${len(i.size[1])}${i.light ? ' · light' : ''}`))));
+      h('button', { class: 'cat-pick', onclick: pick }, h('span', { class: 'grow' }, i.name, h('span', { class: 'sub' }, `${note || (i.community ? i.cat : '') ? `${note || i.cat} · ` : ''}${len(i.size[0])} × ${len(i.size[1])}${i.light ? ' · light' : ''}`))),
+      extra ? h('button', { class: 'round small', 'aria-label': `${i.name}: more`, title: 'More', onclick: () => this.showItem(i, pick, action, extra) }, icon('more')) : null);
   }
-  showItem(i, pick, action) {
+
+  // ---------- models people make (#131, #133) ----------
+  /** Make your own: from photos with a chat assistant, from catalogue furniture, or from a blank. */
+  makeOwn() {
+    const close = modal(h('div', { class: 'menu make-own' },
+      h('div', { class: 'panel-head' }, h('h2', {}, 'Make your own'), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
+      h('div', { class: 'own-card hi' },
+        h('h3', {}, icon('camera'), 'From photos, with a chat assistant'),
+        h('p', { class: 'hint' }, 'Like making a plan from a sketch: the app contacts nothing. Results vary, so think of it as a starting point to fix up here.'),
+        h('ol', { class: 'steps-list' },
+          h('li', {}, 'Save the guide file. It explains the model format, with a chair as the example.'),
+          h('li', {}, 'In the chat assistant you use, attach the guide and a few photos of your furniture (front, side). Ask it to write a Nidorama model file for it, and give it the measurements if you have them.'),
+          h('li', {}, 'Save its reply as a file and open it here. The model opens in the maker to fix up.')),
+        h('div', { class: 'btns' },
+          h('button', { class: 'wide', onclick: () => this.ctx.saveText?.('chair.nidorama-model.json', guideFile()) }, icon('file'), 'Save the guide file'),
+          h('button', { class: 'wide primary', onclick: () => this.openModelFile(close) }, icon('file'), 'Open a model file'))),
+      h('button', { class: 'own-card', onclick: () => { close(); this.pickBase(); } }, h('h3', {}, icon('sofa'), 'Start from furniture in the catalogue'), h('p', { class: 'hint' }, 'Take a bookshelf, desk or cabinet and reshape it.')),
+      h('button', { class: 'own-card', onclick: () => { close(); this.newModel({ id: newModelId(), name: 'My model', category: 'other', size: [0.5, 0.5, 0.5], parts: [{ name: 'Part 1', min: [0, 0, 0], max: [0.5, 0.5, 0.5], color: '#c9a873' }] }); } }, h('h3', {}, icon('plus'), 'Start from a blank'), h('p', { class: 'hint' }, 'One box to begin; add parts from there.')),
+      h('button', { class: 'own-card', onclick: () => { close(); this.placeModel(); } }, h('h3', {}, icon('cube'), 'Want it lifelike?'), h('p', { class: 'hint' }, 'Bring in a .glb: a scan of the real thing (Scaniverse) or a model from a library.'))));
+  }
+  async openModelFile(closeFirst) {
+    const file = await pickFile('.json,application/json,text/plain,*/*');
+    if (!file) return;
+    try {
+      const m = cleanModel(await file.text());
+      m.id = newModelId();
+      closeFirst?.();
+      this.newModel(m, 'This is what the file describes. Fix anything that is off, then save it.');
+    } catch (e) { alert(`"${file.name}" could not be opened as a model.\n${e.message || e}`); }
+  }
+  pickBase() {
+    let cat = this.cat && CATEGORIES.includes(this.cat) ? this.cat : CATEGORIES[0];
+    const body = h('div', { class: 'menu' });
+    const close = modal(body);
+    const draw = () => body.replaceChildren(...nodes(
+      h('div', { class: 'panel-head' }, h('h2', {}, 'Start from…'), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
+      h('div', { class: 'cats' }, CATEGORIES.map((c) => h('button', { class: 'chip small' + (c === cat ? ' on' : ''), onclick: () => { cat = c; draw(); } }, c))),
+      h('div', { class: 'look-list' }, CATALOG.filter((i) => i.cat === cat).map((i) => this.catItem(i, false, () => { close(); this.newModel({ ...itemToModel(i), name: `My ${i.name.toLowerCase()}` }); }, 'Start from this')))));
+    draw();
+  }
+  /** Open the maker on a new model; saving keeps it in My models, ready to place. */
+  newModel(m, hint) {
+    openModelMaker({
+      model: m, heading: 'Make your own', hint, saveLabel: 'Save to My models',
+      actions: [{ label: 'Save as a file', icon: 'file', run: (f) => this.saveModelFile(f) }],
+      onSave: (f) => {
+        const kept = keepModel(f);
+        this.placing = modelToItem(kept); this.tool = 'furniture'; this.cat = 'My models'; this.query = '';
+        this.renderPanel();
+        toast(`${kept.name} is in My models. Tap the plan to place it.`);
+      },
+    });
+  }
+  saveModelFile(m) { this.ctx.saveText?.(`${(m.name || 'model').replace(/[^\w-]+/g, '-').toLowerCase()}.nidorama-model.json`, modelFile(m)); }
+  /** Paint something already placed, or change its shape. It changes in the home, and a copy is kept in My models. */
+  editShape(o) {
+    const m = objectToModel(o, this.level.lights);
+    const was = myModels().find((x) => x.id === o.myModel) || myModels().find((x) => x.id === o.fromModel);
+    m.category = was?.category || itemToModel(CATALOG.find((i) => i.id === o.kind) || { name: '', cat: '', size: [1, 1, 1], parts: [] }).category || 'other';
+    openModelMaker({
+      model: m, heading: `Change ${o.name}`, saveLabel: 'Save',
+      hint: 'Tap a part, then pick its colour. Or change its shape. Saving changes this one in your home, and keeps a copy in My models.',
+      actions: [{ label: 'Save as a file', icon: 'file', run: (f) => this.saveModelFile(f) }],
+      onSave: (f) => {
+        const old = this.allMine().find((x) => x.id === f.id);
+        const kept = keepModel(f);
+        this.sel = { type: 'object', id: o.id };
+        let n = 0;
+        this.change((L) => {
+          const ob = L.objects.find((q) => q.id === o.id);
+          if (!ob) return;
+          applyModelToObject(L, ob, kept);
+          ob.myModel = kept.id; delete ob.fromModel;
+          n = this.updateCopies(kept, old, ob.id);
+          this.homeKeeps(kept);
+        });
+        toast(`Saved. A copy is in My models too${n ? `, and ${n} more placed ${n === 1 ? 'copy was' : 'copies were'} updated` : ''}.`);
+      },
+    });
+  }
+  myModelActions(m) {
+    return [
+      ['brush', 'Change it in the model maker', () => openModelMaker({ model: m, heading: `Change ${m.name}`, saveLabel: 'Save', actions: [{ label: 'Save as a file', icon: 'file', run: (f) => this.saveModelFile(f) }], onSave: (f) => {
+        const kept = keepModel(f);
+        let n = 0;
+        this.change(() => { n = this.updateCopies(kept, m); if (n || (this.home.models || []).some((x) => x.id === kept.id)) this.homeKeeps(kept); });
+        this._fillFurnish?.();
+        toast(n ? `Saved. ${n} placed ${n === 1 ? 'copy was' : 'copies were'} updated.` : 'Saved in My models.');
+      } })],
+      ['share', 'Share with the community', () => this.shareCommunity(m)],
+      ['file', 'Save as a file', () => this.saveModelFile(m)],
+      m.inHome && !myModels().some((x) => x.id === m.id) ? ['plus', 'Keep a copy in My models', () => { keepModel(m); this._fillFurnish?.(); toast(`${m.name} is in your My models.`); }] : null,
+      m.inHome && !myModels().some((x) => x.id === m.id)
+        ? ['trash', 'Remove from this home\'s models', () => { if (confirm(`Remove "${m.name}" from this home's models? Anything already placed stays.`)) { this.change(() => { this.home.models = (this.home.models || []).filter((x) => x.id !== m.id); }); this._fillFurnish?.(); } }, 'danger']
+        : ['trash', 'Delete from My models', () => { if (confirm(`Delete "${m.name}" from My models? Anything already placed stays.`)) { forgetModel(m.id); this._fillFurnish?.(); } }, 'danger'],
+    ].filter(Boolean);
+  }
+  /** My models: the person's own, then the models this home's household has placed (that this person has not kept). */
+  allMine() {
+    const own = myModels(), ids = new Set(own.map((m) => m.id));
+    return [...own, ...(this.home?.models || []).filter((m) => !ids.has(m.id)).map((m) => ({ ...m, inHome: true }))];
+  }
+  /** Keep a model in the home file too, so the household sees it in My models and it travels with the home. Call inside change(). */
+  homeKeeps(model) {
+    const list = (this.home.models ||= []), c = structuredClone(model);
+    delete c.inHome; delete c.url;
+    const i = list.findIndex((x) => x.id === c.id);
+    if (i >= 0) list[i] = c; else list.push(c);
+  }
+  /** Every placed copy of a model, on every level of this home, takes its new shape (keeping its place, angle, name, entity and proportion). Call inside change(). */
+  updateCopies(model, old, skip = null) {
+    let n = 0;
+    for (const L of this.home.levels) for (const o of L.objects) {
+      if (o.id === skip || (o.fromModel !== model.id && o.myModel !== model.id)) continue;
+      applyModelToObject(L, o, model, { scale: scaleOf(o, old), keepZ: (old?.z || 0) === (model.z || 0) });
+      n++;
+    }
+    return n;
+  }
+  /** Save something placed as a model of the person's own; it becomes the model's first copy. */
+  saveAsModel(o) {
+    const name = prompt('Name of your model', o.name || 'My model');
+    if (!name || !name.trim()) return;
+    const m = objectToModel({ ...o, myModel: null }, this.level.lights);
+    m.name = name.trim();
+    m.category = itemToModel(CATALOG.find((i) => i.id === o.kind) || { name: '', cat: '', size: [1, 1, 1], parts: [] }).category || 'other';
+    const kept = keepModel(m);
+    this.change((L) => { const ob = L.objects.find((q) => q.id === o.id); if (ob) { delete ob.myModel; ob.fromModel = kept.id; } this.homeKeeps(kept); });
+    toast(`${kept.name} is in My models.`);
+  }
+  communityActions(m) {
+    return [
+      ['plus', 'Keep a copy in My models', () => { keepModel({ ...m, id: newModelId(), name: m.name }); this._fillFurnish?.(); toast(`${m.name} is in My models.`); }],
+      m.url ? ['web', 'See it on GitHub', () => window.open(m.url, '_blank', 'noopener')] : null,
+    ].filter(Boolean);
+  }
+  /** Share a model with everyone (#133): the person chooses its kind and agrees to the licence; GitHub opens with it ready to post. */
+  shareCommunity(m) {
+    let category = m.category && m.category !== 'other' ? m.category : '', about = '', agreed = false;
+    const body = h('div', { class: 'menu share-model' });
+    const close = modal(body);
+    const draw = () => {
+      const ex = MODEL_CATEGORIES.find((c) => c[0] === category)?.[2];
+      const go = h('button', { class: 'wide primary', disabled: !category || !agreed, onclick: async () => {
+        const { url, copy } = communityShare(m, { category, about });
+        if (copy) { try { await navigator.clipboard.writeText(copy); toast('The model file was copied. Paste it where GitHub shows the gap.'); } catch { this.saveModelFile(m); toast('Saved the model file: attach or paste it into the post.'); } }
+        window.open(url, '_blank', 'noopener');
+        close();
+      } }, icon('share'), 'Continue to GitHub');
+      body.replaceChildren(...nodes(
+        h('div', { class: 'panel-head' }, h('h2', {}, `Share ${m.name}`), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
+        h('p', { class: 'hint' }, 'Shared models can be found by everyone in Furnish → Community, once they have been checked.'),
+        h('label', { class: 'field wide-field' }, h('span', {}, 'What kind of thing is it?'),
+          h('select', { 'aria-label': 'What kind of thing is it?', onchange: (e) => { category = e.target.value; draw(); } },
+            h('option', { value: '', selected: !category }, 'Choose…'),
+            MODEL_CATEGORIES.map(([id, name]) => h('option', { value: id, selected: id === category }, name)))),
+        ex ? h('p', { class: 'hint' }, `For example: ${ex}.`) : null,
+        h('label', { class: 'field wide-field' }, h('span', {}, 'A few words about it (optional)'),
+          h('textarea', { rows: 2, maxlength: 500, placeholder: 'e.g. Steel garage shelving, four shelves', oninput: (e) => (about = e.target.value) }, about)),
+        h('div', { class: 'note-box' },
+          h('b', {}, 'What is sent: '), `its name, kind, size and its ${m.parts.length} parts with their colours.`, h('br'),
+          h('b', {}, 'Not sent: '), 'your home, rooms, devices, photos or anything else.'),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: agreed, onchange: (e) => { agreed = e.target.checked; draw(); } }), `I made this model, and anyone may use, change and share it: ${COMMUNITY_LICENCE}.`),
+        h('p', { class: 'hint' }, 'GitHub opens with the model ready to post. Posting needs a free GitHub account; your GitHub name is shown with it.'),
+        go));
+    };
+    draw();
+  }
+  showItem(i, pick, action, extra = null) {
     const pic = thumb(i, 300);
     const close = modal(h('div', { class: 'menu item-preview' },
       h('div', { class: 'panel-head' }, h('h2', {}, i.name), h('button', { class: 'round small', 'aria-label': 'Close', onclick: () => close() }, icon('close'))),
       pic ? h('img', { src: pic, alt: `What the ${i.name.toLowerCase()} looks like`, width: 300, height: 300 }) : null,
       h('p', { class: 'hint' }, `${len(i.size[0])} wide · ${len(i.size[1])} deep · ${len(i.size[2])} high${i.light ? ' · can be a light' : ''}. Size and colours can be changed after it is placed.`),
-      h('button', { class: 'wide primary', onclick: () => { close(); pick(); } }, icon('check'), action)));
+      h('button', { class: 'wide primary', onclick: () => { close(); pick(); } }, icon('check'), action),
+      ...(extra || []).map(([ic, label, run, cls]) => h('button', { class: `wide ghost${cls ? ` ${cls}` : ''}`, onclick: () => { close(); run(); } }, icon(ic), label))));
   }
 
   levelPanel() {
@@ -1093,6 +1319,8 @@ export class Editor {
       h('div', { class: 'msep' }),
       this.gesturesPanel(o, lights[0]?.entity || o.entity || '', (fn) => edit((lv, ob) => fn(ob))),
       h('div', { class: 'msep' }),
+      o.model ? null : h('button', { class: 'wide primary', onclick: () => this.editShape(o) }, icon('brush'), 'Paint it, or change its shape'),
+      o.model ? null : h('button', { class: 'wide ghost', onclick: () => this.saveAsModel(o) }, icon('cube'), o.fromModel || o.myModel ? 'Save as a new model' : 'Save as my model'),
       h('button', { class: 'wide', onclick: () => this.chooseLook(o) }, icon('sofa'), 'Change how it looks'),
       h('div', { class: 'btns' },
         h('button', { class: 'wide', onclick: () => this.duplicate(o) }, icon('copy'), 'Duplicate'),

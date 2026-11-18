@@ -132,15 +132,16 @@ export const CATALOG = [
 let counter = 0;
 export const uid = (prefix) => `${prefix}-${Date.now().toString(36)}${(counter++).toString(36)}`;
 
+/** A part's options besides its box and colour (see shapes.js and models.js for what each does). */
+export const PART_OPTIONS = ['shape', 'radius', 'opacity', 'axis', 'top', 'bottom', 'slope', 'tilt', 'name'];
+
 /** Build a home-file object (and its light, if any) from a catalogue item, centred at [x, y]. */
 export function makeObject(item, x, y, roomId = null) {
   const [w, d, h] = item.size, z0 = item.z || 0;
   const x0 = x - w / 2, y0 = y - d / 2;
   const parts = item.parts.map(([a, b, c, e, f, g, color, opts = {}]) => {
     const p = { min: [round(x0 + a * w), round(y0 + b * d), round(z0 + c * h)], max: [round(x0 + e * w), round(y0 + f * d), round(z0 + g * h)], color };
-    if (opts.shape) p.shape = opts.shape;
-    if (opts.radius) p.radius = opts.radius;
-    if (opts.opacity != null) p.opacity = opts.opacity;
+    for (const k of PART_OPTIONS) if (opts[k] != null && opts[k] !== '' && !(k === 'radius' && !opts[k])) p[k] = Array.isArray(opts[k]) ? [...opts[k]] : opts[k];
     return p;
   });
   const object = { id: uid(item.id), name: item.name, kind: item.id, room: roomId, bounds: { min: [round(x0), round(y0), z0], max: [round(x0 + w), round(y0 + d), round(z0 + h)] }, rotation: 0, parts };

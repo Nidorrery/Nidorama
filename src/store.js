@@ -5,6 +5,7 @@ import { upgradeSite } from './site.js';
 import { buildSample, guideSample } from './sample.js';
 import { upgradeFile, oldKey, carryOver } from './legacy.js'; // first: it brings settings across before they are read
 import { uid, makeObject, CATALOG } from './catalog.js';
+import { cleanModel, modelToItem } from './models.js';
 import { getBlob, putBlob, blobToDataURL, dataURLToBlob } from './blobs.js';
 import { share, remote, listAssets, getJSON, putJSON } from './remote.js';
 
@@ -78,13 +79,15 @@ function stripNotes(x) {
   return x;
 }
 /** Furniture may be written short ({ kind, at: [x, y], rotation, name, entity }): its shape comes from the catalogue. */
-function fullObject(L, o) {
+function fullObject(L, o, models = []) {
   if (!o || o.parts?.length) return o;
-  const item = CATALOG.find((c) => c.id === o.kind), at = o.at || (o.bounds ? [(o.bounds.min[0] + o.bounds.max[0]) / 2, (o.bounds.min[1] + o.bounds.max[1]) / 2] : null);
+  const mine = models.find((m) => m.id === o.kind); // a model of this home's (made in the model maker) may be named too
+  const item = CATALOG.find((c) => c.id === o.kind) || (mine && modelToItem(mine)), at = o.at || (o.bounds ? [(o.bounds.min[0] + o.bounds.max[0]) / 2, (o.bounds.min[1] + o.bounds.max[1]) / 2] : null);
   if (!item || !at) return null;
   const room = L.rooms.find((r) => r.polygon && pointIn(at, r.polygon))?.id || null;
   const { object, light } = makeObject(item, at[0], at[1], room);
   if (o.id) { if (light) light.fixture = o.id; object.id = o.id; }
+  if (mine) object.fromModel = mine.id;
   for (const k of ['name', 'entity', 'rotation', 'gestures', 'color']) if (o[k] != null) object[k] = o[k];
   if (light && !L.lights.some((l) => l.fixture === object.id)) { if (o.entity && /^(light|switch)\./.test(o.entity)) light.entity = o.entity; light.name = object.name; L.lights.push(light); }
   return object;
@@ -102,6 +105,8 @@ export function normalizeHome(data) {
   home.name ||= 'Imported home';
   home.homeAssistant ||= {};
   home.pages ||= [];
+  // Models made in the model maker that are placed in this home, shared with the household (#131): checked, as files come from anywhere.
+  if (home.models != null) home.models = (Array.isArray(home.models) ? home.models : []).slice(0, 200).flatMap((m) => { try { return [{ ...cleanModel(m), updated: +m.updated || 0 }]; } catch { return []; } });
   for (const L of home.levels) {
     L.id ||= uid('level');
     L.name ||= 'Level';
@@ -109,7 +114,7 @@ export function normalizeHome(data) {
     L.roomControls ||= {};
     L.ceilingHeight ||= 2.4;
     for (const w of L.walls) { w.openings ||= []; w.thickness ||= 0.1; w.height ||= L.ceilingHeight; }
-    L.objects = L.objects.map((o) => fullObject(L, o)).filter(Boolean);
+    L.objects = L.objects.map((o) => fullObject(L, o, home.models || [])).filter(Boolean);
     for (const o of L.objects) o.rotation ||= 0;
     for (const r of L.rooms) if (!r.labelAt && r.polygon?.length) r.labelAt = [r.polygon.reduce((a, q) => a + q[0], 0) / r.polygon.length, r.polygon.reduce((a, q) => a + q[1], 0) / r.polygon.length];
   }
