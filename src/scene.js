@@ -4,7 +4,7 @@
 // nothing is changing: jittered samples are averaged, which gives soft sun shadows, real ambient
 // occlusion and clean edges without a heavy real-time pipeline.
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { partGeometry } from './shapes.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { parseGLB } from './gltf.js';
 import { FLOOR_MATERIALS } from './catalog.js';
@@ -662,12 +662,7 @@ export class NidoramaScene {
       for (const p of model ? [] : o.parts) {
         const w = p.max[0] - p.min[0], d = p.max[1] - p.min[1], h = p.max[2] - p.min[2];
         if (w <= 0 || d <= 0 || h <= 0) continue;
-        let geo;
-        if (p.shape === 'cylinder') {
-          geo = new THREE.CylinderGeometry(0.5, 0.5, 1, 32);
-          geo.scale(w, h, d);
-        } else if (p.radius) geo = new RoundedBoxGeometry(w, h, d, 3, Math.min(p.radius, w / 2, d / 2, h / 2) * 0.999);
-        else geo = new THREE.BoxGeometry(w, h, d);
+        const geo = partGeometry(p, w, h, d);
         const opts = { opacity: p.opacity, rough: roughOf(o.kind, p.color), metal: /#c7ccd1/i.test(p.color) ? 0.6 : 0, fill: '#2a62ab' };
         let mat = this._mat(p.color, opts); // one material per part so a lit shade can glow on its own
         if (o.photo && p.opacity == null) { // covered with the user's photo: once ("fit") or repeated at real size ("tile")

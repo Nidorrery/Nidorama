@@ -108,3 +108,15 @@ Materials so far: `timber-dark`, `marble-tile`, `mosaic-tile`, `decking`, `stair
   finish paint | render | brick | sandstone | weatherboard | timber | stone | tiles); `openings[].trim` (a door's
   frame colour; a window's frame stays `color`); `buttons[].app: 'ha' | 'ma' | 'homey'` (the button opens that app).
 - v0.25: `objects[].dot` and `lights[].dot`: the colour (`#rrggbb`) of that entity's dot in the Nido plan styles.
+- My models: `catalog[]` at the top of the file — furniture made in the app (Furnish → My models, the model maker),
+  in the same form as the built-in catalogue (`src/catalog.js`): `{ id: "my-…", name, cat: "My models", size: [w, d, h],
+  z?, light?: { z }, rev, parts: [[x0, y0, z0, x1, y1, z1, "#rrggbb", options?]] }`, part corners as fractions of
+  `size`. A placed copy is an ordinary object with `kind` set to the model's `id` and its own `parts`, so it shows
+  in versions that do not know `catalog`; changing a model updates every copy. Short furniture may use a model's id
+  as its `kind`. Models are checked when a file is read (ids, sizes, `#rrggbb` colours, known options; at most 200
+  models of 200 parts).
+- Part shapes (in `objects[].parts` and in `catalog[]`): `shape` cylinder | sphere | dome | cone | wedge (else a box,
+  rounded with `radius`); `axis: 'x' | 'y'` lays a cylinder or cone on its side; a cone's `top` / `bottom` are its end
+  widths as a share of the part's width (default 0 and 1); a wedge's `slope` front | back | left | right is the side
+  that comes down to nothing (default front). Every shape fills its part's box (`src/shapes.js`). Versions that do not
+  know a shape draw a box.

@@ -129,6 +129,9 @@ export const CATALOG = [
   { id: 'car', name: 'Car', cat: 'Outdoor', size: [1.85, 4.6, 1.45], parts: [[0, 0, 0.12, 1, 1, 0.62, C.blue, { radius: 0.25 }], [0.06, 0.22, 0.6, 0.94, 0.8, 1, '#3d4b5c', { radius: 0.2 }]] },
 ];
 
+/** A part's options besides its box and colour (see shapes.js for the shapes and what each option does). */
+export const PART_OPTIONS = ['shape', 'radius', 'opacity', 'axis', 'top', 'bottom', 'slope'];
+
 let counter = 0;
 export const uid = (prefix) => `${prefix}-${Date.now().toString(36)}${(counter++).toString(36)}`;
 
@@ -138,9 +141,7 @@ export function makeObject(item, x, y, roomId = null) {
   const x0 = x - w / 2, y0 = y - d / 2;
   const parts = item.parts.map(([a, b, c, e, f, g, color, opts = {}]) => {
     const p = { min: [round(x0 + a * w), round(y0 + b * d), round(z0 + c * h)], max: [round(x0 + e * w), round(y0 + f * d), round(z0 + g * h)], color };
-    if (opts.shape) p.shape = opts.shape;
-    if (opts.radius) p.radius = opts.radius;
-    if (opts.opacity != null) p.opacity = opts.opacity;
+    for (const k of PART_OPTIONS) if (opts[k] != null && opts[k] !== '' && !(k === 'radius' && !opts[k])) p[k] = opts[k];
     return p;
   });
   const object = { id: uid(item.id), name: item.name, kind: item.id, room: roomId, bounds: { min: [round(x0), round(y0), z0], max: [round(x0 + w), round(y0 + d), round(z0 + h)] }, rotation: 0, parts };

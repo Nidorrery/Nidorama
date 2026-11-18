@@ -5,6 +5,7 @@ import { upgradeSite } from './site.js';
 import { buildSample, guideSample } from './sample.js';
 import { upgradeFile, oldKey, carryOver } from './legacy.js'; // first: it brings settings across before they are read
 import { uid, makeObject, CATALOG } from './catalog.js';
+import { cleanCatalog } from './mymodels.js';
 import { getBlob, putBlob, blobToDataURL, dataURLToBlob } from './blobs.js';
 import { share, remote, listAssets, getJSON, putJSON } from './remote.js';
 
@@ -77,10 +78,10 @@ function stripNotes(x) {
   if (x && typeof x === 'object') { for (const k of Object.keys(x)) { if (k.startsWith('_')) delete x[k]; else x[k] = stripNotes(x[k]); } }
   return x;
 }
-/** Furniture may be written short ({ kind, at: [x, y], rotation, name, entity }): its shape comes from the catalogue. */
-function fullObject(L, o) {
+/** Furniture may be written short ({ kind, at: [x, y], rotation, name, entity }): its shape comes from the catalogue, or the home's own models. */
+function fullObject(L, o, mine = []) {
   if (!o || o.parts?.length) return o;
-  const item = CATALOG.find((c) => c.id === o.kind), at = o.at || (o.bounds ? [(o.bounds.min[0] + o.bounds.max[0]) / 2, (o.bounds.min[1] + o.bounds.max[1]) / 2] : null);
+  const item = CATALOG.find((c) => c.id === o.kind) || mine.find((c) => c.id === o.kind), at = o.at || (o.bounds ? [(o.bounds.min[0] + o.bounds.max[0]) / 2, (o.bounds.min[1] + o.bounds.max[1]) / 2] : null);
   if (!item || !at) return null;
   const room = L.rooms.find((r) => r.polygon && pointIn(at, r.polygon))?.id || null;
   const { object, light } = makeObject(item, at[0], at[1], room);
@@ -102,6 +103,7 @@ export function normalizeHome(data) {
   home.name ||= 'Imported home';
   home.homeAssistant ||= {};
   home.pages ||= [];
+  if (home.catalog != null) home.catalog = cleanCatalog(home.catalog); // the home's own models (My models)
   for (const L of home.levels) {
     L.id ||= uid('level');
     L.name ||= 'Level';
@@ -109,7 +111,7 @@ export function normalizeHome(data) {
     L.roomControls ||= {};
     L.ceilingHeight ||= 2.4;
     for (const w of L.walls) { w.openings ||= []; w.thickness ||= 0.1; w.height ||= L.ceilingHeight; }
-    L.objects = L.objects.map((o) => fullObject(L, o)).filter(Boolean);
+    L.objects = L.objects.map((o) => fullObject(L, o, home.catalog)).filter(Boolean);
     for (const o of L.objects) o.rotation ||= 0;
     for (const r of L.rooms) if (!r.labelAt && r.polygon?.length) r.labelAt = [r.polygon.reduce((a, q) => a + q[0], 0) / r.polygon.length, r.polygon.reduce((a, q) => a + q[1], 0) / r.polygon.length];
   }
