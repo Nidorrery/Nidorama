@@ -1,6 +1,13 @@
 # Changelog
 
 ## 0.27.0
+- Make your own furniture: Furnish → Make your own opens the model maker, to build a piece from simple parts
+- With thanks to ElCapitanDre: the model maker was his idea (issue #3), and he contributed its new shapes, dragging with snapping, mirror copy, four legs, whole-model size and height, the light option and copies that follow their model (pull request #4)
+- Start from photos: save the guide file, give it and photos of your furniture to a chat assistant, and open the file it writes
+- Paint anything already in your home, or change its shape: select it in edit mode → Paint it, or change its shape
+- My models: what you make or change is kept for you, on this device and with the add-on for your Home Assistant user
+- Search in Furnish: finds furniture, your models and community models as you type
+- Community: share a model with everyone, and place models other people have shared
 - Model maker: spheres, domes, cones (set each end's width, for lampshades) and wedges (choose which side slopes)
 - Drag parts in the model maker: move them, or resize them by the dots on their faces; they snap to other parts and the floor
 - Mirror copy, four legs under a part, and resizing the whole model at once
@@ -8,15 +15,9 @@
 - Changing a model updates every copy placed in the home
 - Save as my model on anything placed, and your models in Change how it looks
 - Models placed in a home are shared with everyone in the household
-- With thanks to ElCapitanDre, whose prototype brought most of these
 
 ## 0.26.0
-- Make your own furniture: Furnish → Make your own opens the model maker, to build a piece from simple parts
-- Start from photos: save the guide file, give it and photos of your furniture to a chat assistant, and open the file it writes
-- Paint anything already in your home, or change its shape: select it in edit mode → Paint it, or change its shape
-- My models: what you make or change is kept for you, on this device and with the add-on for your Home Assistant user
-- Search in Furnish: finds furniture, your models and community models as you type
-- Community: share a model with everyone, and place models other people have shared
+- A test build of the model maker; everything in it is listed under 0.27.0
 
 ## 0.25.0
 - Nido theme: the dashboard selector opens in place as your home's layers, floors top first, then widget dashboards and other homes
