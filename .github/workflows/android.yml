@@ -3,7 +3,7 @@ name: Android APK
 on:
   push:
     branches-ignore: ['public'] # a snapshot kept for publishing; nothing is built from it here
-    paths-ignore: ['addon/**', 'Dockerfile.addon', 'repository.yaml', '**.md']
+    paths-ignore: ['addon/**', 'Dockerfile.addon', 'repository.yaml', '**.md', '.github/workflows/promote.yml']
   workflow_dispatch:
 
 permissions:

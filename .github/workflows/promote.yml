@@ -31,6 +31,30 @@ jobs:
             *) echo "A build on channel '$from' cannot be promoted."; exit 1 ;;
           esac
           jq -r .body release.json | sed -E "s/(nidorama:channel=)$from/\1$to/; s/^([[:space:]]*)Channel: .*/\1Channel: $label/" > body.txt
+          # Going to Stable: the notes become everything new since the last Stable release, so people who
+          # only take Stable see all of it (each Alpha build's notes, newest first, each line once).
+          if [ "$to" = stable ]; then
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --jq '.[]' | jq -s '.' > all.json
+            at=$(jq -r .created_at release.json)
+            since=$(jq -r --arg t "$at" '[.[] | select(.created_at < $t and (.body // "" | test("nidorama:channel=stable")))] | sort_by(.created_at) | last | .tag_name // ""' all.json)
+            since_at=$(jq -r --arg tag "$since" '[.[] | select(.tag_name == $tag)] | first | .created_at // ""' all.json)
+            jq -r --arg t "$at" --arg s "$since_at" '
+              [.[] | select(.created_at <= $t and .created_at > $s and (.body // "" | test("nidorama:channel=(dev|beta|stable)")))]
+              | sort_by(.created_at) | reverse
+              | [.[] | (.body // "" | capture("<!-- nidorama:notes -->(?<n>[\\s\\S]*?)<!-- /nidorama:notes -->").n) // "" | split("\n")[] | sub("^\\s*[-*]\\s*"; "") | select(length > 0)]
+              | reduce .[] as $l ([]; if any(.[]; . == $l) then . else . + [$l] end)
+              | .[] | "- " + .' all.json > notes.txt
+            if [ -s notes.txt ]; then
+              awk -v nf=notes.txt -v since="$since" '
+                BEGIN { while ((getline l < nf) > 0) notes = notes l "\n" }
+                /^### What.s new/ { print (since != "" ? "### What'"'"'s new since the last Stable release (" since ")" : $0); next }
+                /<!-- nidorama:notes -->/ { print; printf "%s", notes; skip = 1; next }
+                /<!-- \/nidorama:notes -->/ { skip = 0 }
+                !skip' body.txt > body2.txt
+              mv body2.txt body.txt
+              echo "Notes: everything since ${since:-the first release} ($(wc -l < notes.txt) lines)."
+            fi
+          fi
           if [ "$to" = stable ]; then extra='-F prerelease=false -f make_latest=true'; else extra='-F prerelease=true'; fi
           gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F body=@body.txt $extra > /dev/null
           echo "Promoted $TAG from $from to $to."
