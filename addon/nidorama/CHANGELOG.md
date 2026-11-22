@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.28.0
+- New phone in a home that already uses Nidorama? The first screen now looks for Home Assistant on your network and signs you in with one tap
+- Once signed in, the homes already set up in your household appear by themselves
+- Settings → Home Assistant has Find on this network
+- If nothing is found, type the address on the first screen; it says when the Nidorama add-on is missing, and how to add it
+
 ## 0.27.0
 - Make your own furniture: Furnish → Make your own opens the model maker, to build a piece from simple parts
 - With thanks to ElCapitanDre: the model maker was his idea (issue #3), and he contributed its new shapes, dragging with snapping, mirror copy, four legs, whole-model size and height, the light option and copies that follow their model (pull request #4)

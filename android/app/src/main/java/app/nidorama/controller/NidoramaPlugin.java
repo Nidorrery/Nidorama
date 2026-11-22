@@ -30,6 +30,20 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
+import android.net.nsd.NsdManager;
+import android.net.nsd.NsdServiceInfo;
+import android.os.Handler;
+import android.os.Looper;
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -46,6 +60,93 @@ public class NidoramaPlugin extends Plugin {
 
     private ComponentName launcherAlias() {
         return new ComponentName(getContext(), getContext().getPackageName() + ".HomeLauncher");
+    }
+
+    // ---------- finding Home Assistant on this network (#134) ----------
+    // Home Assistant announces itself on the local network (DNS-SD, "_home-assistant._tcp"). Android's own
+    // NsdManager listens for a few seconds, then each one found is resolved to its address. Nothing leaves
+    // the local network. Resolves { found: [{ name, host, port, url, location_name, uuid, version }] }.
+    private static final String HA_SERVICE = "_home-assistant._tcp";
+
+    @PluginMethod
+    public void discoverHomeAssistant(PluginCall call) {
+        final NsdManager nsd = (NsdManager) getContext().getSystemService(Context.NSD_SERVICE);
+        if (nsd == null) { call.resolve(found(new JSArray())); return; }
+        final long listenMs = Math.max(1000, Math.min(10000, call.getInt("ms", 3500)));
+        final List<NsdServiceInfo> seen = Collections.synchronizedList(new ArrayList<>());
+        final JSArray out = new JSArray();
+        final AtomicBoolean done = new AtomicBoolean(false);
+        final Handler main = new Handler(Looper.getMainLooper());
+        final NsdManager.DiscoveryListener listener = new NsdManager.DiscoveryListener() {
+            @Override public void onStartDiscoveryFailed(String type, int code) { finish(call, out, done); }
+            @Override public void onStopDiscoveryFailed(String type, int code) {}
+            @Override public void onDiscoveryStarted(String type) {}
+            @Override public void onDiscoveryStopped(String type) {}
+            @Override public void onServiceFound(NsdServiceInfo info) { seen.add(info); }
+            @Override public void onServiceLost(NsdServiceInfo info) {}
+        };
+        try {
+            nsd.discoverServices(HA_SERVICE, NsdManager.PROTOCOL_DNS_SD, listener);
+        } catch (Exception e) {
+            call.resolve(found(out));
+            return;
+        }
+        main.postDelayed(() -> {
+            try { nsd.stopServiceDiscovery(listener); } catch (Exception ignored) {}
+            if (done.get()) return;
+            resolveNext(nsd, new ArrayList<>(seen), 0, out, new HashSet<>(), call, done);
+        }, listenMs);
+        // Whatever happens, answer within a few seconds of listening.
+        main.postDelayed(() -> finish(call, out, done), listenMs + 6000);
+    }
+
+    private static JSObject found(JSArray list) {
+        JSObject r = new JSObject();
+        r.put("found", list);
+        return r;
+    }
+
+    private static void finish(PluginCall call, JSArray out, AtomicBoolean done) {
+        if (done.compareAndSet(false, true)) call.resolve(found(out));
+    }
+
+    @SuppressWarnings("deprecation")
+    private void resolveNext(NsdManager nsd, List<NsdServiceInfo> list, int i, JSArray out, Set<String> ids, PluginCall call, AtomicBoolean done) {
+        if (done.get()) return;
+        if (i >= list.size() || i >= 10) { finish(call, out, done); return; }
+        try {
+            nsd.resolveService(list.get(i), new NsdManager.ResolveListener() {
+                @Override public void onResolveFailed(NsdServiceInfo info, int code) {
+                    resolveNext(nsd, list, i + 1, out, ids, call, done);
+                }
+                @Override public void onServiceResolved(NsdServiceInfo info) {
+                    try {
+                        JSObject o = new JSObject();
+                        InetAddress addr = info.getHost();
+                        String host = addr == null ? "" : addr.getHostAddress();
+                        if (addr instanceof Inet6Address) host = "[" + host.replaceAll("%.*$", "") + "]";
+                        int port = info.getPort() > 0 ? info.getPort() : 8123;
+                        o.put("name", info.getServiceName());
+                        o.put("host", host);
+                        o.put("port", port);
+                        Map<String, byte[]> attrs = info.getAttributes();
+                        String id = info.getServiceName();
+                        if (attrs != null) {
+                            for (String k : new String[] { "location_name", "uuid", "version", "internal_url", "base_url" }) {
+                                byte[] v = attrs.get(k);
+                                if (v != null) o.put(k, new String(v, StandardCharsets.UTF_8));
+                            }
+                            if (attrs.get("uuid") != null) id = new String(attrs.get("uuid"), StandardCharsets.UTF_8);
+                        }
+                        o.put("url", host.isEmpty() ? "" : "http://" + host + ":" + port);
+                        if (ids.add(id) && !host.isEmpty()) out.put(o);
+                    } catch (Exception ignored) {}
+                    resolveNext(nsd, list, i + 1, out, ids, call, done);
+                }
+            });
+        } catch (Exception e) {
+            resolveNext(nsd, list, i + 1, out, ids, call, done);
+        }
     }
 
     @PluginMethod

@@ -20,6 +20,7 @@ import { upgradeFile } from './legacy.js';
 import { webPanel, viewUrl } from './webpanel.js';
 import { startAlarms } from './widgetviews.js';
 import { Editor } from './editor.js';
+import { findHomeAssistant } from './discover.js';
 import { syncMyModels } from './mymodels.js';
 import { renderPage, newPage, roomControlsOf } from './dashboard.js';
 import { controlRow as ctlRow } from './controls.js';
@@ -160,6 +161,7 @@ let syncedWith = null;
 hub.on((kind, id, p) => {
   if (kind === 'status') {
     renderStatus();
+    if (!cur && p === hub.ha) renderWelcome();
     if (p === hub.ha && p.status === 'connected' && syncedWith !== p) { syncedWith = p; Promise.resolve(syncWithHA(p)).catch(() => {}).finally(() => syncMyModels(p)); setTimeout(findMusicAssistant, 1500); }
     if (openSheet === 'settings' && !document.activeElement?.matches('input')) renderSheet();
   }
@@ -199,7 +201,7 @@ function connect() {
   ensureDemoEntities();
   renderStatus();
   syncFromStates();
-  connectAddon({ haUrl: device.haUrl, token: haToken(), addonUrl: device.addonUrl }).then(() => { householdSync(); if (view.styleId === 'photo' && level()) applyPhoto(); });
+  connectAddon({ haUrl: device.haUrl, token: haToken(), addonUrl: device.addonUrl }).then(() => { householdSync(); if (!cur) renderWelcome(); if (view.styleId === 'photo' && level()) applyPhoto(); });
 }
 /** Pick up what others in the household changed (never while this device is in the middle of editing). */
 function householdSync() { if (!editMode && !document.querySelector('.modal-wrap')) syncHousehold().catch(() => {}); }
@@ -848,6 +850,35 @@ function statusChips(hm) {
     of('media_player').length ? chip('music', playing ? `${playing} playing` : 'Quiet', playing) : null,
     heat ? chip('flame', `${st(heat).attributes?.temperature ?? ''}°`, true) : null));
 }
+// ---------- first open: find Home Assistant, and the homes the household already set up (#134) ----------
+let haFind = { state: 'idle', found: [] };
+function lookForHA() {
+  haFind = { state: 'looking', found: [] };
+  findHomeAssistant([device.haUrl]).then((found) => { haFind = { state: 'done', found }; }, () => { haFind = { state: 'done', found: [] }; })
+    .finally(() => { if (!cur) renderWelcome(); });
+}
+const joinHA = (url) => { device.haUrl = url.trim().replace(/\/+$/, ''); saveDevice(); haSignIn(device.haUrl); };
+function welcomeHA() {
+  if (window.__NIDORAMA_ADDON__) return null; // opened inside Home Assistant: already connected
+  const ha = hub.ha;
+  if (ha?.status === 'connected') {
+    return h('div', { class: 'welcome-ha ok' }, icon('ha'),
+      h('div', {}, h('b', {}, 'Connected to Home Assistant.'),
+        remote.info ? h('p', { class: 'hint' }, 'No homes have been set up in this household yet. Create one below, and the other phones and tablets in the house will find it.')
+          : h('p', { class: 'hint' }, 'The Nidorama add-on was not found, so homes set up on other devices cannot be shared here. ', h('button', { class: 'linkish', onclick: addonGuide }, 'How to add the add-on'))));
+  }
+  if (haFind.state === 'idle') lookForHA();
+  const typed = h('input', { type: 'url', placeholder: 'http://homeassistant.local:8123', value: device.haUrl || '', autocomplete: 'off', 'aria-label': 'Home Assistant address' });
+  return h('div', { class: 'welcome-ha' },
+    h('h2', {}, icon('ha'), 'Already using Nidorama at home?'),
+    h('p', { class: 'hint' }, 'Sign in to your Home Assistant and the homes already set up in your household appear here.'),
+    ha && ha.status !== 'connected' ? h('p', { class: 'hint bad' }, `Home Assistant: ${ha.status}${ha.error ? ' — ' + ha.error : ''}`) : null,
+    haFind.state === 'looking' ? h('p', { class: 'hint' }, 'Looking for Home Assistant on this network…') : null,
+    ...haFind.found.map((f) => h('button', { class: 'wide primary', onclick: () => joinHA(f.url) }, icon('ha'), h('span', { class: 'grow' }, `Sign in to ${f.name}`, h('span', { class: 'sub' }, f.url)))),
+    haFind.state === 'done' && !haFind.found.length ? h('p', { class: 'hint' }, 'No Home Assistant found on this network. Type its address, as you would in a browser at home:') : null,
+    h('div', { class: 'welcome-ha-type' }, typed, h('button', { class: 'chip', onclick: () => { const u = typed.value.trim(); if (!/^https?:\/\//.test(u)) return alert('Type the whole address, starting with http:// (for example http://homeassistant.local:8123).'); joinHA(u); } }, 'Sign in')),
+    haFind.state === 'done' ? h('button', { class: 'linkish', onclick: () => { lookForHA(); renderWelcome(); } }, 'Look again') : null);
+}
 function renderWelcome() {
   panel.replaceChildren();
   applyPanel();
@@ -855,6 +886,7 @@ function renderWelcome() {
     h('img', { src: 'icon.svg', alt: '', width: 72, height: 72 }),
     h('h1', {}, 'Nidorama'),
     h('p', {}, 'Look down into a model of your home and tap the things in it. Draw your own plan, or load a home file.'),
+    welcomeHA(),
     h('div', { class: 'row units-row' }, h('div', { class: 'row-label' }, 'Units'),
       seg([['metric', 'Metric'], ['imperial', 'Imperial']], app.units, (v) => { setUnits(v); renderWelcome(); })),
     h('button', { class: 'wide primary', onclick: createHome }, icon('plus'), 'Create a home'),
@@ -2024,6 +2056,15 @@ function integrationBody(id, redraw) {
         ? h('p', { class: 'hint' }, 'Connected through the Nidorama add-on. Nothing to set up.')
         : [
           h('label', {}, 'Address at home', url),
+          h('div', { class: 'btns' }, h('button', { class: 'wide ghost', onclick: async (e) => {
+            const b = e.currentTarget; b.disabled = true; b.textContent = 'Looking on this network…';
+            const found = await findHomeAssistant([url.value]);
+            b.disabled = false; b.textContent = 'Find on this network';
+            if (!found.length) return alert('No Home Assistant answered on this network. Check the phone is on the home Wi-Fi, or type the address.');
+            const pick = found.length === 1 ? found[0] : found[Math.max(0, (parseInt(prompt(`Found:\n${found.map((f, i) => `${i + 1}. ${f.name} — ${f.url}`).join('\n')}\n\nWhich one? (number)`, '1'), 10) || 1) - 1)] || found[0];
+            url.value = pick.url;
+            toast(`Found ${pick.name} at ${pick.url}. Now sign in.`);
+          } }, icon('ha'), 'Find on this network')),
           h('label', {}, 'Address when away', remoteUrl),
           h('p', { class: 'hint' }, 'The home address is always tried first because it is fastest; the away address is only used when the home one cannot be reached.'),
           slowAddress ? h('p', { class: 'hint bad' }, 'The home address looks like a remote one. Use the local address (http://…:8123) there for the quickest response.') : null,
@@ -2718,6 +2759,7 @@ window.__nidorama = { view, editor, show, home, setEditMode: (on) => setEditMode
 new ResizeObserver(() => view.resize()).observe(stage);
 onLibraryChange((why) => {
   if (why !== 'sync' && why !== 'undo') return;
+  if (!cur && why === 'sync' && firstView()) { show(firstView()); return toast('Found the homes already set up in your household.'); }
   if (!valid(cur)) return show(firstView());
   if (why === 'sync' && !editor.active) show(cur);
 });

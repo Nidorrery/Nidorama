@@ -1056,3 +1056,13 @@ textarea.yaml { font: 12px/1.45 ui-monospace, 'Roboto Mono', Menlo, monospace; w
 .maker-tools { display: flex; gap: 6px; flex-wrap: wrap; }
 .maker-insp .seg.wrap { flex-wrap: wrap; }
 .maker-insp .seg.wrap button { flex: 1 1 28%; }
+/* first open: find Home Assistant (#134) */
+.welcome-ha { width: 100%; max-width: 420px; text-align: left; padding: 14px; border-radius: 18px; border: 1px solid var(--line); background: var(--chip); display: flex; flex-direction: column; gap: 8px; box-sizing: border-box; }
+.welcome-ha.ok { flex-direction: row; align-items: flex-start; gap: 10px; }
+.welcome-ha h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; }
+.welcome-ha p { margin: 0; }
+.welcome-ha .wide .sub { display: block; font-size: 12px; opacity: .8; font-weight: 400; }
+.welcome-ha-type { display: flex; gap: 6px; }
+.welcome-ha-type input { flex: 1; min-width: 0; font: inherit; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel, #fff); color: inherit; }
+.welcome-ha .linkish { align-self: flex-start; }
+.welcome-ha .linkish { background: none; border: none; padding: 2px 0; color: var(--accent); font: inherit; font-size: 13.5px; text-decoration: underline; cursor: pointer; }

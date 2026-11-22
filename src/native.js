@@ -124,3 +124,9 @@ export async function shareTextFile(name, text) {
   if (!Native) return false;
   try { await Native.shareTextFile({ name, text }); return true; } catch (e) { console.warn(e); return false; }
 }
+
+/** Home Assistant servers announcing themselves on this network (#134): [{ name, url, location_name, uuid }]. Android only; [] elsewhere. */
+export async function discoverHomeAssistant(ms = 3500) {
+  if (!Native) return [];
+  try { return (await Native.discoverHomeAssistant({ ms })).found || []; } catch (e) { console.warn(e); return []; }
+}
