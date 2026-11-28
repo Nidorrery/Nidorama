@@ -11,6 +11,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { h, nodes, icon, seg, numField, textField, len, imperial } from './ui.js';
 import { MODEL_CATEGORIES, fitModel, tiltMesh, mirrorPart, legsUnder, scaleModel, movePartAxis, resizePartFace } from './models.js';
 import { partGeometry } from './shapes.js';
+import { cutter, partKey } from './cuts.js';
 
 const PALETTE = ['#f4f1ea', '#d9cbb3', '#c9a873', '#8a5a3b', '#5e3d29', '#3d4246', '#1f2421', '#8a9096', '#3f6fb5', '#7f9a8a', '#4f7f46', '#c0392b', '#e0a43c', '#d98aa0'];
 const SHAPES = [['box', 'Box'], ['round', 'Rounded'], ['cylinder', 'Cylinder'], ['sphere', 'Sphere'], ['dome', 'Dome'], ['cone', 'Cone'], ['wedge', 'Wedge']];
@@ -84,8 +85,8 @@ export function openModelMaker({ model, heading, hint, saveLabel = 'Save to My m
   function addPart(shape) {
     commit(() => {
       const size = m.parts.length ? fitModel(structuredClone(m)).size : [0, 0, 0];
-      const p = { name: `${SHAPES.find((s) => s[0] === (shape || 'box'))[1]} ${m.parts.length + 1}`, min: [r3(size[0] + 0.05), 0, 0], max: [r3(size[0] + 0.35), 0.3, 0.3], color: m.parts[sel]?.color || '#c9a873' };
-      if (shape && shape !== 'round') p.shape = shape;
+      const p = { name: `${(SHAPES.find((s) => s[0] === (shape || 'box')) || ['', 'Box'])[1]} ${m.parts.length + 1}`, min: [r3(size[0] + 0.05), 0, 0], max: [r3(size[0] + 0.35), 0.3, 0.3], color: m.parts[sel]?.color || '#c9a873' };
+      if (shape === 'cut') { p.cut = true; p.name = `Cut-out ${m.parts.length + 1}`; } else if (shape && shape !== 'round') p.shape = shape;
       if (shape === 'round') p.radius = 0.03;
       m.parts.push(p);
       sel = m.parts.length - 1;
@@ -102,7 +103,10 @@ export function openModelMaker({ model, heading, hint, saveLabel = 'Save to My m
     const move = (k, v) => set((q) => { const w = q.max[k] - q.min[k]; q.min[k] = r3(v); q.max[k] = r3(v + w); });
     const shape = shapeOf(p);
     const used = [...new Set(m.parts.map((q) => q.color))];
-    const paint = (c) => commit(() => { const was = m.parts[sel].color; for (const q of m.parts) if (q === m.parts[sel] || (paintAll && q.color === was)) q.color = c; });
+    // Painting from the picker: the parts change colour live while choosing (not kept in undo), then once for undo when chosen.
+    const chosen = m.parts.map((q, i) => i === sel || (paintAll && q.color === p.color));
+    const paint = (c) => { m.parts.forEach((q, i) => { if (chosen[i] && q._was) { q.color = q._was; delete q._was; } }); commit(() => { m.parts.forEach((q, i) => { if (chosen[i]) q.color = c; }); }); };
+    const preview = (c) => { m.parts.forEach((q, i) => { if (chosen[i]) { q._was ||= q.color; q.color = c; } }); view.update(m, sel); };
     const tilt = p.tilt || [0, 0, 0];
     const setTilt = (k, v) => set((q) => { const t = [...(q.tilt || [0, 0, 0])]; t[k] = Math.round(v * 10) / 10; if (t.some((x) => x)) q.tilt = t; else delete q.tilt; });
     const [endA, endB] = coneEnds(p.axis);
@@ -111,7 +115,7 @@ export function openModelMaker({ model, heading, hint, saveLabel = 'Save to My m
       h('div', { class: 'maker-sub' }, 'Colour'),
       h('div', { class: 'swatches' },
         [...used, ...PALETTE.filter((c) => !used.includes(c))].slice(0, 16).map((c) => h('button', { class: 'swatch-btn' + (c === p.color ? ' on' : ''), style: `background:${c}`, 'aria-label': `Colour ${c}`, onclick: () => paint(c) })),
-        h('span', { class: 'colbtn' }, h('input', { type: 'color', value: p.color, 'aria-label': 'Any colour', onchange: (e) => paint(e.target.value) }))),
+        h('span', { class: 'colbtn' }, h('input', { type: 'color', value: p.color, 'aria-label': 'Any colour', oninput: (e) => preview(e.target.value), onchange: (e) => paint(e.target.value) }))),
       seg([[false, 'This part'], [true, 'Every part this colour']], paintAll, (v) => { paintAll = v; draw(); }),
       h('div', { class: 'maker-sub' }, 'Shape'),
       h('div', { class: 'seg wrap' }, SHAPES.map(([v, label]) => h('button', { class: v === shape ? 'on' : '', onclick: () => set((q) => {
@@ -132,6 +136,8 @@ export function openModelMaker({ model, heading, hint, saveLabel = 'Save to My m
       h('div', { class: 'maker-sub' }, 'Tilt', h('span', { class: 'sub' }, ' for sloped backs and parts at an angle')),
       h('div', { class: 'fields' }, numField('Lean back', tilt[0], (v) => setTilt(0, v), { min: -180, max: 180, step: 1, unit: '°' }), numField('Lean right', tilt[1], (v) => setTilt(1, v), { min: -180, max: 180, step: 1, unit: '°' }), numField('Turn', tilt[2], (v) => setTilt(2, v), { min: -180, max: 180, step: 1, unit: '°' })),
       numField('See-through', p.opacity == null ? 0 : Math.round((1 - p.opacity) * 100), (v) => set((q) => { if (v <= 0) delete q.opacity; else q.opacity = Math.round(100 - Math.min(95, v)) / 100; }), { step: 5, min: 0, max: 95, unit: '%' }),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!p.cut, onchange: (e) => set((q) => { if (e.target.checked) q.cut = true; else delete q.cut; }) }), 'Cut out: removes its shape from the parts it overlaps'),
+      p.cut ? h('p', { class: 'hint' }, 'Shown in red here, and not drawn on the plan. A box over half a cylinder makes a half-round bench; over three quarters, a corner bath.') : null,
       h('div', { class: 'maker-tools' },
         h('button', { class: 'chip small', disabled: full, onclick: () => commit(() => { const q = structuredClone(m.parts[sel]); q.min[0] = r3(q.min[0] + 0.05); q.max[0] = r3(q.max[0] + 0.05); q.name = `${q.name || 'Part'} copy`; m.parts.push(q); sel = m.parts.length - 1; }) }, icon('copy'), 'Copy'),
         h('button', { class: 'chip small', disabled: full, title: 'A copy on the other side of the model, flipped left ↔ right', onclick: () => commit(() => { sel = mirrorPart(m, sel); }) }, icon('rotate'), 'Mirror copy'),
@@ -153,6 +159,9 @@ export function openModelMaker({ model, heading, hint, saveLabel = 'Save to My m
       h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Numbers snap to'), seg(STEPS(), step, (v) => { step = v; draw(); })),
     ];
   }
+  // Redrawing the inspector while its colour picker is open would close the picker (#4 feedback): wait until it closes.
+  const pickerOpen = () => document.activeElement?.matches?.('input[type="color"]') && insp.contains(document.activeElement);
+  insp.addEventListener('focusout', (e) => { if (e.target.matches?.('input[type="color"]')) setTimeout(() => draw(), 0); });
   function draw(refit = false) {
     undoBtn.disabled = !past.length; redoBtn.disabled = !future.length;
     if (nameIn.value !== m.name && document.activeElement !== nameIn) nameIn.value = m.name;
@@ -162,9 +171,9 @@ export function openModelMaker({ model, heading, hint, saveLabel = 'Save to My m
     strip.replaceChildren(...m.parts.map((p, i) => h('button', { class: 'chip small' + (i === sel ? ' on' : ''), onclick: () => { sel = i; draw(); } }, h('i', { class: 'dot', style: `background:${p.color}` }), p.name || `Part ${i + 1}`)));
     strip.querySelector('.on')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
     const full = m.parts.length >= MAX_PARTS;
-    adds.replaceChildren(h('span', { class: 'sub' }, 'Add'), ...[['box', 'Box'], ['round', 'Rounded'], ['cylinder', 'Cylinder'], ['sphere', 'Sphere'], ['cone', 'Cone'], ['wedge', 'Wedge']].map(([s, label]) =>
+    adds.replaceChildren(h('span', { class: 'sub' }, 'Add'), ...[['box', 'Box'], ['round', 'Rounded'], ['cylinder', 'Cylinder'], ['sphere', 'Sphere'], ['cone', 'Cone'], ['wedge', 'Wedge'], ['cut', 'Cut-out']].map(([s, label]) =>
       h('button', { class: 'chip small', disabled: full, onclick: () => addPart(s) }, icon('plus'), label)));
-    insp.replaceChildren(...inspector());
+    if (!pickerOpen()) insp.replaceChildren(...inspector());
     view.update(m, sel, refit);
   }
   function close() { view.dispose(); root.remove(); }
@@ -205,8 +214,9 @@ function preview(host, hooks) {
   const size = () => { const w = host.clientWidth || 300, hh = host.clientHeight || 300; renderer.setSize(w, hh, false); cam.aspect = w / hh; cam.updateProjectionMatrix(); render(); };
   const ro = new ResizeObserver(size);
   ro.observe(host);
-  const dispose = (o) => o.traverse((x) => { x.geometry?.dispose(); x.material?.dispose?.(); });
+  const dispose = (o) => o.traverse((x) => { if (!x.userData?.sharedGeometry) x.geometry?.dispose(); x.material?.dispose?.(); });
   const clear = () => { for (const g of [group, handles]) for (const o of [...g.children]) { dispose(o); g.remove(o); } meshes = []; };
+  let dragging = false; // while a part is dragged, cuts wait until it is let go (worked out again on the drop)
   // Model → view: x → x, y (to the front) → z, z (up) → y; `off` centres the model on the grid (fixed between fits, so nothing jumps while dragging).
   const toView = (x, y, z) => new THREE.Vector3(x - off[0], z, y - off[1]);
   function fit(m) {
@@ -244,20 +254,25 @@ function preview(host, hooks) {
   function update(m, sel, refit = false, noFit = false) {
     last = { m, sel };
     clear();
+    const at = (mesh, p) => { mesh.position.copy(toView((p.min[0] + p.max[0]) / 2, (p.min[1] + p.max[1]) / 2, (p.min[2] + p.max[2]) / 2)); tiltMesh(THREE, mesh, p.tilt); return mesh; };
+    const ok = (p) => [0, 1, 2].every((k) => p.max[k] - p.min[k] > 0);
+    // Cut-outs (#141): shown as see-through red so they can be chosen and dragged; they cut the solid parts they overlap.
+    const cut = cutter(THREE, m.parts.filter((p) => p.cut && ok(p)).map((p) => { const mesh = at(new THREE.Mesh(partGeometry(p, p.max[0] - p.min[0], p.max[2] - p.min[2], p.max[1] - p.min[1])), p); return { geometry: mesh.geometry, position: mesh.position, quaternion: mesh.quaternion, key: partKey(p) }; }));
     m.parts.forEach((p, i) => {
       const w = p.max[0] - p.min[0], d = p.max[1] - p.min[1], hh = p.max[2] - p.min[2];
       if (w <= 0 || d <= 0 || hh <= 0) return;
       const geo = partGeometry(p, w, hh, d);
       const on = i === sel;
-      const mat = new THREE.MeshStandardMaterial({ color: p.color, roughness: 0.8, transparent: p.opacity != null, opacity: p.opacity ?? 1, emissive: on ? '#F2B544' : '#000000', emissiveIntensity: on ? 0.18 : 0 });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.copy(toView((p.min[0] + p.max[0]) / 2, (p.min[1] + p.max[1]) / 2, (p.min[2] + p.max[2]) / 2));
-      tiltMesh(THREE, mesh, p.tilt);
+      const mat = p.cut
+        ? new THREE.MeshBasicMaterial({ color: '#ff5a5a', transparent: true, opacity: on ? 0.32 : 0.18, depthWrite: false })
+        : new THREE.MeshStandardMaterial({ color: p.color, roughness: 0.8, transparent: p.opacity != null, opacity: p.opacity ?? 1, emissive: on ? '#F2B544' : '#000000', emissiveIntensity: on ? 0.18 : 0 });
+      const mesh = at(new THREE.Mesh(geo, mat), p);
+      if (!p.cut && !dragging) cut(mesh, partKey(p));
       mesh.userData.part = i;
       group.add(mesh);
       meshes.push(mesh);
-      if (on) {
-        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), new THREE.LineBasicMaterial({ color: '#F2B544', depthTest: false, transparent: true }));
+      if (on || p.cut) {
+        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), new THREE.LineBasicMaterial({ color: p.cut ? '#ff5a5a' : '#F2B544', depthTest: false, transparent: true, opacity: on ? 1 : 0.6 }));
         edges.renderOrder = 2;
         mesh.add(edges);
       }
@@ -303,7 +318,7 @@ function preview(host, hooks) {
   }, { capture: true });
   canvas.addEventListener('pointermove', (e) => {
     if (!drag || !down) return;
-    if (!drag.started) { if (Math.hypot(e.clientX - down.x, e.clientY - down.y) < 4) return; drag.started = true; hooks.dragStart(); }
+    if (!drag.started) { if (Math.hypot(e.clientX - down.x, e.clientY - down.y) < 4) return; drag.started = true; dragging = true; hooks.dragStart(); }
     const r = rayAt(e), { tol, step } = hooks.snapping();
     hooks.drag((m, sel) => {
       const p = m.parts[sel];
@@ -335,14 +350,14 @@ function preview(host, hooks) {
   });
   canvas.addEventListener('pointerup', (e) => {
     const was = drag, tap = down && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= 6;
-    down = null; drag = null; controls.enabled = true; say('');
+    down = null; drag = null; controls.enabled = true; say(''); dragging = false;
     if (was?.started) return hooks.dragEnd();
     if (!tap) return;
     ray.ray.copy(rayAt(e));
     const hit = ray.intersectObjects(meshes, false)[0];
     hooks.pick(hit ? hit.object.userData.part : -1);
   });
-  canvas.addEventListener('pointercancel', () => { if (drag?.started) hooks.dragEnd(); down = null; drag = null; controls.enabled = true; say(''); });
+  canvas.addEventListener('pointercancel', () => { dragging = false; if (drag?.started) hooks.dragEnd(); down = null; drag = null; controls.enabled = true; say(''); });
   // For automated tests: where a model point (metres) is on the screen.
   canvas.projectPoint = (x, y, z) => { const v = toView(x, y, z).project(cam), r = canvas.getBoundingClientRect(); return [r.left + ((v.x + 1) / 2) * r.width, r.top + ((1 - v.y) / 2) * r.height]; };
   return {

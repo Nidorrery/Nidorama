@@ -2754,6 +2754,13 @@ native.onBackButton(() => {
 }, () => launcherEnabled /* as a home screen, Back never leaves */);
 if (native.isNative && device.keepAwake) native.setKeepScreenOn(true);
 view.refineEnabled = device.refine !== false;
+// Rows of category chips have no scrollbar: a mouse wheel scrolls them sideways (#4 feedback).
+document.addEventListener('wheel', (e) => {
+  const row = e.target.closest?.('.cats');
+  if (!row || row.scrollWidth <= row.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+  row.scrollLeft += e.deltaY;
+  e.preventDefault();
+}, { passive: false });
 window.__nidorama = { view, editor, show, home, setEditMode: (on) => setEditMode(on), testUpdate: (u) => { update = u; renderUpdate(); askToUpdate(); } }; // handles for automated tests
 
 new ResizeObserver(() => view.resize()).observe(stage);

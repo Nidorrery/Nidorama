@@ -128,6 +128,10 @@ export class Editor {
 
   /** Apply a change to the home file, redraw the model and refresh the inspector. */
   change(fn, { panel = true } = {}) {
+    // A colour picker that is still open (its advanced editing sends changes as you go) must not be redrawn
+    // away under the finger: the panel is redrawn when it closes instead.
+    const picker = document.activeElement?.matches?.('input[type="color"]') && this.panel.contains(document.activeElement) ? document.activeElement : null;
+    if (picker && panel) { panel = false; picker.addEventListener('blur', () => this.renderPanel(), { once: true }); }
     mutate(this.home, () => fn(this.level));
     this.refresh(panel);
   }
@@ -1002,7 +1006,7 @@ export class Editor {
   furniturePanel() {
     // Search across the catalogue, My models and the community (#132); the list redraws as you type, the field keeps its place.
     const results = h('div', { class: 'furnish-results' });
-    const fill = () => results.replaceChildren(...nodes(this.furnishList()));
+    const fill = () => { results.replaceChildren(...nodes(this.furnishList())); requestAnimationFrame(() => results.querySelector('.cats .on')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })); };
     this._fillFurnish = fill;
     const search = h('input', { type: 'search', class: 'furnish-search', placeholder: 'Search furniture, your models, the community', value: this.query || '', 'aria-label': 'Search furniture', autocomplete: 'off', oninput: (e) => { this.query = e.target.value; fill(); } });
     fill();
@@ -1290,7 +1294,7 @@ export class Editor {
           seg([['l', 'Left'], ['r', 'Right']], o.kind.at(-1), (v) => v !== o.kind.at(-1) && edit((lv, ob) => { mirrorObject(lv, ob); ob.kind = `sofa-chaise-${v}`; })))
         : h('button', { class: 'wide ghost', onclick: () => edit((lv, ob) => mirrorObject(lv, ob)) }, icon('rotate'), 'Flip left ↔ right'),
       h('div', { class: 'row' }, h('div', { class: 'row-label' }, 'Colours'),
-        colours.map((c) => h('span', { class: 'colbtn' }, h('input', { type: 'color', value: c, 'aria-label': 'Colour', onchange: (e) => edit((lv, ob) => { for (const p of ob.parts) if (p.color === c) p.color = e.target.value; }) })))),
+        colours.map((c) => { let now = c; return h('span', { class: 'colbtn' }, h('input', { type: 'color', value: c, 'aria-label': 'Colour', onchange: (e) => { const was = now; now = e.target.value; edit((lv, ob) => { for (const p of ob.parts) if (p.color === was) p.color = now; }); } })); })),
       h('div', { class: 'msep' }),
       h('h3', {}, 'Make it yours'),
       o.photo

@@ -38,7 +38,7 @@ export const categoryName = (id) => MODEL_CATEGORIES.find((c) => c[0] === id)?.[
 const HEX = /^#[0-9a-f]{6}$/i;
 /** Shapes a part can have besides a box (drawn by shapes.js): cylinders and cones can lie down (axis), cones have end widths, wedges a slope. */
 export const SHAPES = ['cylinder', 'sphere', 'dome', 'cone', 'wedge'];
-const PART_OPTS = ['shape', 'radius', 'opacity', 'axis', 'top', 'bottom', 'slope', 'tilt', 'name'];
+const PART_OPTS = ['shape', 'radius', 'opacity', 'axis', 'top', 'bottom', 'slope', 'tilt', 'name', 'cut'];
 const optsOf = (p) => Object.fromEntries(PART_OPTS.filter((k) => p[k] != null).map((k) => [k, Array.isArray(p[k]) ? [...p[k]] : p[k]]));
 const num = (v, lo, hi, d = 0) => (Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : d);
 const r3 = (v) => Math.round(v * 1000) / 1000;
@@ -93,6 +93,7 @@ function cleanPart(p, i) {
     if (bottom !== 1) out.bottom = Math.round(bottom * 1000) / 1000;
   }
   if (out.shape === 'wedge' && ['back', 'left', 'right'].includes(p.slope)) out.slope = p.slope;
+  if (p.cut === true) out.cut = true; // a cut-out: removes its shape from the parts it overlaps (#141)
   if (p.opacity != null && +p.opacity < 1) out.opacity = num(p.opacity, 0.05, 1, 1);
   if (Array.isArray(p.tilt) && p.tilt.some((v) => +v)) out.tilt = [0, 1, 2].map((k) => Math.round(num(p.tilt[k], -360, 360) * 10) / 10);
   if (!out.name) out.name = `Part ${i + 1}`;
@@ -102,7 +103,8 @@ function cleanPart(p, i) {
 export function fitModel(m) {
   if (!m.parts.length) { m.size = [0.1, 0.1, 0.1]; return m; }
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (const p of m.parts) for (const c of partCorners(p)) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], c[k]); hi[k] = Math.max(hi[k], c[k]); }
+  const solid = m.parts.some((p) => !p.cut) ? m.parts.filter((p) => !p.cut) : m.parts; // a cut-out may reach past the model: it does not make it bigger
+  for (const p of solid) for (const c of partCorners(p)) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], c[k]); hi[k] = Math.max(hi[k], c[k]); }
   for (const p of m.parts) for (let k = 0; k < 3; k++) { p.min[k] = r3(p.min[k] - lo[k]); p.max[k] = r3(p.max[k] - lo[k]); }
   if (m.light) m.light.z = r3(num(m.light.z - lo[2], 0, 20));
   if (lo[2]) m.z = r3(num((m.z || 0) + lo[2], -5, 10)); // parts lifted off the floor: the whole model is placed higher instead
@@ -370,6 +372,7 @@ export function guideFile() {
     _tilt: 'Anything sloped or lying down: "tilt": [a, b, c] in degrees turns the part about its own centre. a: its top leans towards the back (a chair back is about 8 to 15). b: its top leans to the right. c: it turns clockwise, seen from above. A cylinder lying from front to back is "tilt": [90, 0, 0]; lying from left to right is [0, 90, 0]. Give the box as it would be standing up before the tilt (for a lying cylinder, its length is its height).',
     _curves: 'Curves are made from rounded boxes, cylinders and small tilts: a curved chair back is a well rounded box leaning back; a curved arm is a cylinder lying down; a bend is two short parts at slightly different tilts.',
     _glass: '"opacity": 0.3 for glass or clear plastic.',
+    _cut: '"cut": true makes a part a cut-out: it is not drawn, and removes its shape from the parts it overlaps. A box cutting away half of a cylinder makes a half-round bench; a quarter, a corner bath; a cylinder cut into a box, a basin.',
     _light: 'For a lamp, add "light": { "z": height of the bulb in metres } and the app will make it glow.',
     _category: `One of: ${MODEL_CATEGORIES.map((c) => c[0]).join(', ')}.`,
     _example: 'Below is an example: a timber dining chair with arms and a cushion, about 0.52 m wide, 0.5 m deep and 0.9 m high.',

@@ -119,3 +119,5 @@ Materials so far: `timber-dark`, `marble-tile`, `mosaic-tile`, `decking`, `stair
   cylinder or cone down (drawn by `src/shapes.js`; every shape fills its part's box). Model files may have `z` (placed at
   height). `home.models[]`: the models placed in this home (model-file form), shared with the household; short
   furniture `{ kind, at }` may name one of them.
+- v0.29: a part with `cut: true` is a cut-out: not drawn, it removes its shape from the parts of the same object it overlaps
+  (`src/cuts.js`, three-bvh-csg). Older versions draw it as an ordinary part.

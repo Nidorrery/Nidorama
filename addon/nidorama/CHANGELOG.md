@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.29.0
+- Cut-out shapes in the model maker: a part set to Cut out removes its shape from the parts it overlaps, for half-round benches, corner baths, basins and more
+- Fixed: the colour picker closed while you were still choosing a colour (in the model maker and in edit mode)
+- Fixed: a scrollbar showed across the category chips in Furnish; the chips now scroll sideways by swipe or mouse wheel
+- With thanks to ElCapitanDre: cut-out shapes were his idea, and he found both fixes (pull request #4)
+
 ## 0.28.0
 - New phone in a home that already uses Nidorama? The first screen now looks for Home Assistant on your network and signs you in with one tap
 - Once signed in, the homes already set up in your household appear by themselves

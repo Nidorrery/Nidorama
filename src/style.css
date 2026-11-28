@@ -1066,3 +1066,6 @@ textarea.yaml { font: 12px/1.45 ui-monospace, 'Roboto Mono', Menlo, monospace; w
 .welcome-ha-type input { flex: 1; min-width: 0; font: inherit; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel, #fff); color: inherit; }
 .welcome-ha .linkish { align-self: flex-start; }
 .welcome-ha .linkish { background: none; border: none; padding: 2px 0; color: var(--accent); font: inherit; font-size: 13.5px; text-decoration: underline; cursor: pointer; }
+/* the category chips scroll sideways without a scrollbar of their own (#4 feedback); faded edges show there is more */
+.cats { scrollbar-width: none; -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); padding-right: 20px; }
+.cats::-webkit-scrollbar { display: none; }

@@ -133,7 +133,7 @@ let counter = 0;
 export const uid = (prefix) => `${prefix}-${Date.now().toString(36)}${(counter++).toString(36)}`;
 
 /** A part's options besides its box and colour (see shapes.js and models.js for what each does). */
-export const PART_OPTIONS = ['shape', 'radius', 'opacity', 'axis', 'top', 'bottom', 'slope', 'tilt', 'name'];
+export const PART_OPTIONS = ['shape', 'radius', 'opacity', 'axis', 'top', 'bottom', 'slope', 'tilt', 'name', 'cut'];
 
 /** Build a home-file object (and its light, if any) from a catalogue item, centred at [x, y]. */
 export function makeObject(item, x, y, roomId = null) {
